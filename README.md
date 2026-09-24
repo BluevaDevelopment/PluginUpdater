@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-26.0-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-26.1-blue">
   <img alt="Lua" src="https://img.shields.io/badge/Lua-5.5.1-000080?logo=lua&logoColor=white">
   <img alt="Mawu" src="https://img.shields.io/badge/Mawu-26.3-000080">
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.4.20-7F52FF?logo=kotlin&logoColor=white">
@@ -60,14 +60,14 @@ Notes:
 
 ## Getting started
 
-Download `pluginupdater-26.0.jar` from the
+Download `pluginupdater-26.1.jar` from the
 [latest release](https://github.com/BluevaDevelopment/PluginUpdater/releases/latest)
 into the server folder (the one with `plugins/`). It needs Java 21 or newer.
 
 ```text
-java -jar pluginupdater-26.0.jar detect --write   # find your plugins and write pluginupdater.toml
-java -jar pluginupdater-26.0.jar check            # see what would be updated
-java -jar pluginupdater-26.0.jar                  # update
+java -jar pluginupdater-26.1.jar detect --write   # find your plugins and write pluginupdater.toml
+java -jar pluginupdater-26.1.jar check            # see what would be updated
+java -jar pluginupdater-26.1.jar                  # update
 ```
 
 Stop the server before updating, or restart it afterwards: a running server
