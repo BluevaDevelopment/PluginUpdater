@@ -1,6 +1,9 @@
+import org.quartzlang.embed.gradle.QuartzSeverity
+import org.gradle.api.file.SourceDirectorySet
+
 plugins {
-    kotlin("jvm") version "2.4.20"
-    id("net.blueva.mawu") version "26.3"
+    kotlin("jvm") version "2.4.21"
+    id("org.quartzlang.embed")
     id("com.gradleup.shadow") version "9.6.1"
     application
 }
@@ -10,31 +13,28 @@ version = providers.gradleProperty("version")
     .orElse(providers.environmentVariable("RELEASE_VERSION"))
     .get()
 
-repositories {
-    mavenCentral()
-    maven("https://repo.blueva.net/releases")
-}
-
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-    implementation("org.tomlj:tomlj:1.3.0")
-
     testImplementation(kotlin("test"))
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-mawu {
-    // The primitives the Kotlin host installs before any script runs (see host/Host.kt).
-    knownGlobals.addAll("use", "host", "term", "http", "fs", "zip", "json", "toml")
+kotlin {
+    jvmToolchain(25)
 }
 
-kotlin {
-    jvmToolchain(21)
+quartz {
+    hostPackage = "host"
+    moduleName = "pluginupdater"
+    warnings = QuartzSeverity.ERROR
 }
+
+// The tests see the program's own Quartz sources, so a test imports net.blueva.pluginupdater.* directly.
+(sourceSets["test"].extensions.getByName("quartz") as SourceDirectorySet).srcDir("src/main/quartz")
 
 application {
     applicationName = "pluginupdater"
     mainClass.set("net.blueva.pluginupdater.PluginUpdaterKt")
+    applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
 }
 
 // `./gradlew run` works on run/, a scratch server folder git ignores.
@@ -50,6 +50,8 @@ tasks.shadowJar {
     archiveClassifier.set("")
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/*.EC")
     mergeServiceFiles()
+    filesMatching("META-INF/*.kotlin_module") { duplicatesStrategy = DuplicatesStrategy.INCLUDE }
+    manifest { attributes("Main-Class" to "net.blueva.pluginupdater.PluginUpdaterKt", "Enable-Native-Access" to "ALL-UNNAMED") }
 }
 
 tasks.jar {
@@ -69,6 +71,8 @@ tasks.processResources {
 
 tasks.test {
     useJUnitPlatform()
-    // The Lua suites under tests/network/ talk to the real stores, so they only run with -Pnetwork.
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    // The suites under src/test/kotlin/.../network talk to the real stores, so they only run with -Pnetwork.
     systemProperty("pluginupdater.network", providers.gradleProperty("network").isPresent)
+    providers.gradleProperty("quartz.library").orNull?.let { systemProperty("quartz.library", it) }
 }

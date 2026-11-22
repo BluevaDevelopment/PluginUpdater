@@ -1,0 +1,170 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Hangar, PaperMC's plugin repository.
+package net.blueva.pluginupdater.sources.hangar
+
+import net.blueva.pluginupdater.core.model.*
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.versions
+import net.blueva.pluginupdater.server.installed
+import org.quartzlang.data.*
+import org.quartzlang.regex.*
+
+pub const Name = "hangar"
+pub const Label = "Hangar"
+pub const Example = "https://hangar.papermc.io/<owner>/<project>"
+
+const Api = "https://hangar.papermc.io/api/v1"
+const Page = 25
+const Pages = 4
+
+pub fn parse(url: str) -> Ref? {
+    let found = compileRegex(r"^https?://hangar\.papermc\.io/([^/?#]+)/([^/?#]+)").unwrap().find(url) ?? return null
+    let fields: Map<str, str> = Map()
+    fields["owner"] = found.group(1) ?? ""
+    fields["slug"] = found.group(2) ?? ""
+    return Ref(Name, fields)
+}
+
+pub fn link(target: Ref) -> str {
+    return "https://hangar.papermc.io/{target.get("owner")}/{target.get("slug")}"
+}
+
+fn platformOf(name: str) -> str {
+    return match name {
+        "velocity" => "VELOCITY"
+        "waterfall" => "WATERFALL"
+        _ => "PAPER"
+    }
+}
+
+fn items(value: Value?) -> [Value] {
+    let out: [Value] = []
+    if let v = value {
+        for index in 0..v.len() {
+            if let item = v.item(index) {
+                out.push(item)
+            }
+        }
+    }
+    return out
+}
+
+fn tableOf(value: Value) -> Map<str, Value>? {
+    return match value {
+        Table(table) => table
+        _ => null
+    }
+}
+
+/// A channel counts as unstable by its name, or by the flag its owner set on it.
+fn stability(version: Value) -> int {
+    var rank = 0
+    if let channel = version.get("channel") {
+        rank = versions.stability(channel.get("name")?.asStr() ?? "")
+        for flag in items(channel.get("flags")) {
+            if flag.asStr() == "UNSTABLE" && rank == 0 {
+                rank = -2
+            }
+        }
+    }
+    return rank
+}
+
+/// One page of a project's builds for the platform, newest first.
+fn builds(target: Ref, ctx: Context, offset: int) -> Result<[Value], str> {
+    var url = "{Api}/projects/{text.encode(target.get("slug"))}/versions?limit={Page}&offset={offset}&platform={platformOf(ctx.platform)}"
+    if let minecraft = ctx.minecraft {
+        url = url + "&platformVersion={text.encode(minecraft)}"
+    }
+    let page = net.jsonOrNull(url)?
+    if let found = page {
+        return Ok(items(found.get("result")))
+    }
+    return Err("Hangar has no project {target.get("owner")}/{target.get("slug")}")
+}
+
+/// Projects that publish many snapshots can bury their last release a few pages down.
+pub fn latest(target: Ref, ctx: Context) -> Result<Release?, str> {
+    let wanted = versions.channelRank(ctx.channel) ?? 0
+    let platform = platformOf(ctx.platform)
+    for page in 0..Pages {
+        let list = builds(target, ctx, page * Page)?
+        for version in list {
+            let download = version.get("downloads")?.get(platform) ?? continue
+            if stability(version) < wanted {
+                continue
+            }
+            let info = download.get("fileInfo")
+            let hashes: Map<str, str> = Map()
+            if let sha = info?.get("sha256Hash")?.asStr() {
+                hashes["sha256"] = sha
+            }
+            let url = download.get("downloadUrl")?.asStr() ?? download.get("externalUrl")?.asStr()
+            let id = version.get("id")
+            let release = Release(
+                id = if let v = id { "{v.asInt() ?? 0}" } else { null },
+                version = version.get("name")?.asStr(),
+                url = url,
+                fileName = info?.get("name")?.asStr(),
+                hashes = hashes,
+            )
+            return Ok(release)
+        }
+        if list.len() < Page {
+            return Ok(null)
+        }
+    }
+    return Ok(null)
+}
+
+/// Whether the build named like the installed version is the installed file.
+fn same(target: Ref, plugin: Plugin) -> Result<bool, str> {
+    let installedVersion = plugin.version ?? return Ok(false)
+    let version = net.jsonOrNull("{Api}/projects/{text.encode(target.get("slug"))}/versions/{text.encode(installedVersion)}")?
+    let found = version ?? return Ok(false)
+    let sha256 = installed.digest(plugin, "sha256")
+    if let downloads = found.get("downloads") {
+        if let table = tableOf(downloads) {
+            for entry in table.values() {
+                if entry.get("fileInfo")?.get("sha256Hash")?.asStr() == sha256 {
+                    return Ok(true)
+                }
+            }
+        }
+    }
+    return Ok(false)
+}
+
+pub fn search(plugin: Plugin, _ctx: Context) -> Result<Found?, str> {
+    let name = plugin.name ?? return Ok(null)
+    let page = net.jsonOrNull("{Api}/projects?limit=10&q={text.encode(name)}")?
+    let key = text.key(name)
+    for project in items(page?.get("result")) {
+        let namespace = project.get("namespace") ?? continue
+        let owner = namespace.get("owner")?.asStr() ?? ""
+        let slug = namespace.get("slug")?.asStr() ?? ""
+        let title = project.get("name")?.asStr() ?? slug
+        if text.key(title) == key || text.key(slug) == key {
+            let target = Ref(Name, Map())
+            target.fields["owner"] = owner
+            target.fields["slug"] = slug
+            let hints: [str] = []
+            for group in items(project.get("settings")?.get("links")) {
+                for entry in items(group.get("links")) {
+                    if let url = entry.get("url")?.asStr() {
+                        hints.push(url)
+                    }
+                }
+            }
+            return Ok(Found(link(target), title, same(target, plugin)?, hints))
+        }
+    }
+    return Ok(null)
+}

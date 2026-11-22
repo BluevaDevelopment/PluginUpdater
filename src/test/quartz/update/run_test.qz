@@ -1,0 +1,113 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Whole runs against a server folder, with plugins published as jars on disk.
+package net.blueva.pluginupdater.update.run_test
+
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.server.config
+import net.blueva.pluginupdater.server.writer
+import net.blueva.pluginupdater.support.check
+import net.blueva.pluginupdater.update.plan.Outcome
+import net.blueva.pluginupdater.update.run
+import org.quartzlang.embed.fs
+
+/// A server with plugins/ and a folder of published jars; entries are name and published file name pairs.
+fn server(name: str, settings: str, entries: [(str, str)]) -> str {
+    let root = check.folder(name)
+    let _ = fs.createDirectories("{root}/plugins")
+    let blocks: [str] = []
+    for entry in entries {
+        blocks.push(writer.entry(entry.0, [("url", "{root}/published/{entry.1}")]))
+    }
+    let text = writer.add("[settings]\n{settings}\n\n[plugins]", blocks).unwrap()
+    let _ = fs.writeText("{root}/pluginupdater.toml", text)
+    return root
+}
+
+fn load(root: str) -> config.Config {
+    return config.load("{root}/pluginupdater.toml").unwrap()
+}
+
+fn action(outcomes: [Outcome], name: str) -> str {
+    return (outcomes.find((o) => o.name == name) ?? panic("no outcome for {name}")).action
+}
+
+@test
+fn outdatedPluginsAreReplacedAndLogged() {
+    let root = server("run-replaced", "", [("Alpha", "Alpha-1.1.jar"), ("Beta", "Beta.jar"), ("Gamma", "Gamma-2.0.jar")])
+    let plugins = "{root}/plugins"
+    let published = "{root}/published"
+    check.jar(plugins, "Alpha-1.0.jar", "Alpha", "1.0")
+    check.jar(published, "Alpha-1.1.jar", "Alpha", "1.1")
+    check.jar(plugins, "Beta.jar", "Beta", "3.0")
+    let _ = fs.copy("{plugins}/Beta.jar", "{published}/Beta.jar")
+    check.jar(published, "Gamma-2.0.jar", "Gamma", "2.0")
+
+    let out = ui.create(false)
+    let first = run.execute(out, load(root), true, []).unwrap()
+    check.equal("update", action(first.outcomes, "Alpha"), "alpha")
+    check.equal("current", action(first.outcomes, "Beta"), "beta")
+    check.equal("install", action(first.outcomes, "Gamma"), "gamma")
+    check.equal(["Alpha-1.1.jar", "Beta.jar", "Gamma-2.0.jar"], fs.list(plugins).unwrap(), "plugins")
+    check.equal(2, first.changes.len(), "changes")
+
+    let log = fs.readText("{root}/changelog.md").unwrap()
+    assert(log.contains("- Alpha 1.0 -> 1.1\n- Gamma (new) -> 2.0\n"), log)
+    let backups = "{root}/.pluginupdater/backups"
+    let kept = fs.list("{backups}/{fs.list(backups).unwrap()[0]}").unwrap()
+    check.equal(["Alpha-1.0.jar"], kept, "backup")
+    check.equal(false, fs.exists("{root}/.pluginupdater/staging"), "staging")
+
+    let second = run.execute(out, load(root), true, []).unwrap()
+    check.equal("current", action(second.outcomes, "Alpha"), "alpha again")
+    check.equal("current", action(second.outcomes, "Beta"), "beta again")
+    check.equal("current", action(second.outcomes, "Gamma"), "gamma again")
+    let _ = fs.delete(root)
+}
+
+@test
+fn aCheckChangesNothing() {
+    let root = server("run-check", "", [("Alpha", "Alpha-1.1.jar")])
+    check.jar("{root}/plugins", "Alpha-1.0.jar", "Alpha", "1.0")
+    check.jar("{root}/published", "Alpha-1.1.jar", "Alpha", "1.1")
+    let done = run.execute(ui.create(false), load(root), false, []).unwrap()
+    check.equal("update", action(done.outcomes, "Alpha"), "alpha")
+    check.equal(["Alpha-1.0.jar"], fs.list("{root}/plugins").unwrap(), "plugins")
+    check.equal(false, fs.exists("{root}/changelog.md"), "changelog")
+    let _ = fs.delete(root)
+}
+
+@test
+fn olderBuildsAreOnlyInstalledWhenAllowed() {
+    let root = server("run-older", "", [("Alpha", "Alpha-0.9.jar")])
+    check.jar("{root}/plugins", "Alpha-1.0.jar", "Alpha", "1.0")
+    check.jar("{root}/published", "Alpha-0.9.jar", "Alpha", "0.9")
+    let out = ui.create(false)
+    let done = run.execute(out, load(root), true, []).unwrap()
+    check.equal("skip", done.outcomes[0].action, "skipped")
+    assert((done.outcomes[0].message ?? "").contains("older than the installed 1.0"), "message")
+
+    let path = "{root}/pluginupdater.toml"
+    let source = fs.readText(path).unwrap().replace("[settings]", "[settings]\nallow-downgrade = true")
+    let _ = fs.writeText(path, source)
+    check.equal("update", run.execute(out, load(root), true, []).unwrap().outcomes[0].action, "allowed")
+    let _ = fs.delete(root)
+}
+
+@test
+fn aDownloadOfAnotherPluginIsRefused() {
+    let root = server("run-other", "backups = 0", [("Alpha", "Other.jar")])
+    check.jar("{root}/plugins", "Alpha-1.0.jar", "Alpha", "1.0")
+    check.jar("{root}/published", "Other.jar", "Other", "9.0")
+    let done = run.execute(ui.create(false), load(root), true, []).unwrap()
+    check.equal("failed", done.outcomes[0].action, "failed")
+    let message = done.outcomes[0].message ?? ""
+    assert(message.contains("the download is the plugin 'Other', not 'Alpha'"), message)
+    check.equal(["Alpha-1.0.jar"], fs.list("{root}/plugins").unwrap(), "plugins")
+    let _ = fs.delete(root)
+}

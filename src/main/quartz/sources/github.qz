@@ -1,0 +1,266 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// GitHub releases.
+package net.blueva.pluginupdater.sources.github
+
+import net.blueva.pluginupdater.core.model.*
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.server.installed
+import org.quartzlang.data.*
+import org.quartzlang.regex.*
+
+pub const Name = "github"
+pub const Label = "GitHub"
+pub const Example = "https://github.com/<owner>/<repository>"
+
+const Api = "https://api.github.com"
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+/// Words in a file name that say which platform a jar is for.
+fn own(platform: str) -> [str] {
+    return match platform {
+        "velocity" => ["velocity"]
+        "waterfall" => ["bungee", "waterfall"]
+        _ => ["paper", "bukkit", "spigot", "folia", "purpur"]
+    }
+}
+
+fn everyPlatform() -> [str] {
+    return ["paper", "bukkit", "spigot", "folia", "purpur", "velocity", "bungee", "waterfall", "fabric", "forge",
+        "neoforge", "quilt", "sponge", "standalone"]
+}
+
+/// A file attached to a release.
+pub struct Asset {
+    id: int
+    name: str
+    url: str
+    digest: str?
+}
+
+pub fn parse(url: str) -> Ref? {
+    let found = pattern(r"^https?://github\.com/([^/?#]+)/([^/?#]+)").find(url) ?? return null
+    let owner = found.group(1) ?? return null
+    let repository = pattern(r"\.git$").replace(found.group(2) ?? "", "")
+    let fields: Map<str, str> = Map()
+    fields["owner"] = owner
+    fields["repository"] = repository
+    return Ref(Name, fields)
+}
+
+pub fn link(project: Ref) -> str {
+    return "https://github.com/{project.get("owner")}/{project.get("repository")}"
+}
+
+fn get(url: str, ctx: Context) -> Result<Value?, str> {
+    let headers: [(str, str)] = [("Accept", "application/vnd.github+json"), ("X-GitHub-Api-Version", "2022-11-28")]
+    if let token = ctx.github {
+        headers.push(("Authorization", "Bearer {token}"))
+    }
+    let reply = net.request("GET", url, headers, null)?
+    if reply.status == 404 {
+        return Ok(null)
+    }
+    if (reply.status == 403 || reply.status == 429) && net.header(reply, "x-ratelimit-remaining") == "0" {
+        return Err("GitHub's hourly request limit is used up; set tokens.github in the configuration or GITHUB_TOKEN to raise it")
+    }
+    if reply.status < 200 || reply.status > 299 {
+        return Err("{url} answered HTTP {reply.status}")
+    }
+    return match parseJson(reply.text) {
+        Ok(value) => Ok(value)
+        Err(why) => Err("Could not read {url}: {why}")
+    }
+}
+
+/// The newest release: the one GitHub marks latest, or with a beta or alpha channel, any non-draft one.
+pub fn release(project: Ref, ctx: Context) -> Result<Value?, str> {
+    let base = "{Api}/repos/{project.get("owner")}/{project.get("repository")}/releases"
+    if ctx.channel == "release" {
+        return get("{base}/latest", ctx)
+    }
+    let list = get("{base}?per_page=20", ctx)? ?? return Ok(null)
+    for index in 0..list.len() {
+        let candidate = list.item(index) ?? continue
+        if !(candidate.get("draft")?.asBool() ?? false) {
+            return Ok(candidate)
+        }
+    }
+    return Ok(null)
+}
+
+/// The assets of a release.
+pub fn assetsOf(found: Value) -> [Asset] {
+    let out: [Asset] = []
+    let list = found.get("assets") ?? return out
+    for index in 0..list.len() {
+        let item = list.item(index) ?? continue
+        let name = item.get("name")?.asStr() ?? continue
+        out.push(Asset(item.get("id")?.asInt() ?? 0, name, item.get("browser_download_url")?.asStr() ?? "", item.get("digest")?.asStr()))
+    }
+    return out
+}
+
+/// How well a jar fits the plugin and platform, and the length of its name without the version: the main jar usually
+/// has the shortest one.
+fn score(fileName: str, name: str, platform: str) -> (int, int) {
+    let stem = pattern(r"\.jar$").replace(fileName.lower(), "")
+    let mine = own(platform)
+    var points = 0
+    for word in everyPlatform() {
+        if stem.contains(word) {
+            points += if mine.contains(word) { 3 } else { -10 }
+        }
+    }
+    let base = text.key(pattern(r"[\-_]?v?\d.*$").replace(stem, ""))
+    let wanted = text.key(name)
+    if base == wanted {
+        points += 5
+    } else if base.startsWith(wanted) {
+        points += 2
+    }
+    return (points, base.len())
+}
+
+/// The jar of a release the plugin needs: the one matching the entry's asset glob, the only jar, or the one whose name
+/// best fits the plugin and platform. Null when the release has no jar.
+pub fn pickAsset(assets: [Asset], name: str, ctx: Context) -> Result<Asset?, str> {
+    let jars: [Asset] = []
+    for asset in assets {
+        let lower = asset.name.lower()
+        if lower.endsWith(".jar") && !lower.endsWith("sources.jar") && !lower.endsWith("javadoc.jar") {
+            jars.push(asset)
+        }
+    }
+    let shown = jars.map((a) => a.name).join(", ")
+
+    if let glob = ctx.asset {
+        let matches = jars.filter((a) => text.glob(glob, a.name))
+        if matches.len() == 1 {
+            return Ok(matches[0])
+        }
+        let which = if matches.len() == 0 { "no jar" } else { "several jars" }
+        return Err("{which} of the release match asset '{glob}' ({shown})")
+    }
+    if jars.len() <= 1 {
+        return Ok(jars.pop())
+    }
+
+    var best = jars[0]
+    var top = 0
+    var shortest = 0
+    var tied = false
+    var first = true
+    for asset in jars {
+        let (points, length) = score(asset.name, name, ctx.platform)
+        if first || points > top || (points == top && length < shortest) {
+            best = asset
+            top = points
+            shortest = length
+            tied = false
+            first = false
+        } else if points == top && length == shortest {
+            tied = true
+        }
+    }
+    if tied {
+        let suggestion = pattern(r"\d[A-Za-z0-9.\-]*\.jar$").replace(best.name, "*.jar")
+        return Err("the release has several jars ({shown}); set asset to the one to use, such as asset = \"{suggestion}\"")
+    }
+    return Ok(best)
+}
+
+fn asRelease(found: Value, asset: Asset) -> Release {
+    let hashes: Map<str, str> = Map()
+    if let digest = asset.digest {
+        if digest.startsWith("sha256:") {
+            hashes["sha256"] = digest.slice(7, digest.len())
+        }
+    }
+    return Release(
+        id = "{found.get("id")?.asInt() ?? 0}/{asset.id}",
+        version = found.get("tag_name")?.asStr(),
+        url = asset.url,
+        fileName = asset.name,
+        hashes = hashes,
+    )
+}
+
+pub fn latest(project: Ref, ctx: Context) -> Result<Release?, str> {
+    let found = release(project, ctx)? ?? return Ok(null)
+    let asset = pickAsset(assetsOf(found), ctx.name, ctx)?
+    if let chosen = asset {
+        return Ok(asRelease(found, chosen))
+    }
+    return Err("{link(project)} release {found.get("tag_name")?.asStr() ?? ""} has no jar")
+}
+
+/// The installed file name with its version as a wildcard, as in 'EssentialsX-*.jar'.
+fn installedGlob(plugin: Plugin) -> str? {
+    let version = plugin.version ?? return null
+    let index = plugin.fileName.find(version) ?? return null
+    return plugin.fileName.slice(0, index) + "*" + plugin.fileName.slice(index + version.len(), plugin.fileName.len())
+}
+
+struct Picked {
+    asset: Asset
+    glob: str?
+}
+
+/// The release's jar for an installed plugin, and the asset glob to configure when picking by name alone would choose
+/// another jar.
+fn assetFor(found: Value, plugin: Plugin, ctx: Context) -> Picked? {
+    let assets = assetsOf(found)
+    let name = plugin.name ?? ""
+    var automatic: Asset? = null
+    if let picked = pickAsset(assets, name, ctx).unwrapOr(null) {
+        automatic = picked
+    }
+    if let glob = installedGlob(plugin) {
+        let scoped = ctx with { asset = glob }
+        if let byName = pickAsset(assets, name, scoped).unwrapOr(null) {
+            var same = false
+            if let auto = automatic {
+                same = auto.id == byName.id
+            }
+            if !same {
+                return Picked(byName, glob)
+            }
+        }
+    }
+    if let auto = automatic {
+        return Picked(auto, null)
+    }
+    return null
+}
+
+/// Only follows repositories the plugin or another store links to: hints.
+pub fn search(plugin: Plugin, ctx: Context, hints: [str]) -> Result<Found?, str> {
+    let seen: Map<str, bool> = Map()
+    for hint in hints {
+        let project = parse(hint) ?? continue
+        let address = link(project).lower()
+        if seen.has(address) {
+            continue
+        }
+        seen[address] = true
+        let found = release(project, ctx)? ?? continue
+        let picked = assetFor(found, plugin, ctx) ?? continue
+        let sha256 = asRelease(found, picked.asset).hashes.get("sha256")
+        var exact = false
+        if let hex = sha256 {
+            exact = hex == installed.digest(plugin, "sha256")
+        }
+        return Ok(Found(link(project), "{project.get("owner")}/{project.get("repository")}", exact = exact, asset = picked.glob))
+    }
+    return Ok(null)
+}

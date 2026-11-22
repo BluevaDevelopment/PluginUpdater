@@ -1,0 +1,181 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// pluginupdater detect: find where the installed plugins are published, and optionally add them to the
+// configuration.
+package net.blueva.pluginupdater.cli.commands.detect
+
+import net.blueva.pluginupdater.cli.command.{Command, Opt, Values}
+import net.blueva.pluginupdater.cli.common
+import net.blueva.pluginupdater.core.model.{Context, Plugin}
+import net.blueva.pluginupdater.core.paths
+import net.blueva.pluginupdater.core.system
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.detect.detect
+import net.blueva.pluginupdater.server.config
+import net.blueva.pluginupdater.server.installed
+import net.blueva.pluginupdater.server.writer
+import org.quartzlang.embed.fs
+
+pub fn declaration() -> Command {
+    return Command(
+        "detect",
+        "Find the installed plugins in every store, and say where each one is and is not",
+        [
+            common.configOption(),
+            Opt("write", short = "w", flag = true, help = "Add what was found to the configuration, writing it when there is none"),
+            Opt("plugins", short = "p", value = "folder", help = "The plugins folder, when there is no configuration yet. Defaults to plugins"),
+        ],
+    )
+}
+
+fn describe(out: ui.Ui, slot: detect.Slot) -> str {
+    if let why = slot.error {
+        return ui.style(out, "error: {why}", "31")
+    }
+    let found = slot.found ?? return ui.style(out, "not found", "2")
+    var how = "by name     "
+    var color = "33"
+    if found.exact {
+        how = "same file   "
+        color = "32"
+    } else if found.confirmed {
+        how = "same plugin "
+        color = "32"
+    } else if found.other {
+        how = "other plugin"
+        color = "31"
+    }
+    var line = "{ui.style(out, how, color)}  {found.link}"
+    if let note = found.note {
+        line += "  ({note})"
+    }
+    return line
+}
+
+fn show(out: ui.Ui, entry: detect.Entry, configured: bool) {
+    let plugin = entry.plugin
+    var head = "{ui.style(out, plugin.name ?? plugin.fileName, "1")} {plugin.version ?? "?"}  {ui.style(out, plugin.fileName, "2")}"
+    if configured {
+        head += "  {ui.style(out, "[configured]", "36")}"
+    }
+    ui.say(head)
+    for name in detect.shown() {
+        let slot = entry.slots.get(name) ?? detect.Slot(null, null)
+        ui.info("{text.pad(name, 11)}  {describe(out, slot)}")
+    }
+}
+
+pub fn execute(out: ui.Ui, values: Values) -> Result<int, str> {
+    let path = values.text("config") ?? config.File
+    var loaded: config.Config? = null
+    if fs.isFile(path) {
+        loaded = config.load(path)?
+    }
+    var folder = paths.absolute("plugins")
+    if let given = values.text("plugins") {
+        folder = paths.absolute(given)
+    } else if let known = loaded {
+        folder = known.pluginsFolder
+    }
+    if !fs.isDirectory(folder) {
+        return Err("there is no plugins folder at {folder}; point to it with --plugins")
+    }
+
+    var context = Context(
+        "",
+        paths.absolute("."),
+        "paper",
+        "release",
+        github = system.env("GITHUB_TOKEN"),
+        curseforge = system.env("CURSEFORGE_API_KEY")
+    )
+    let configured: Map<str, bool> = Map()
+    if let known = loaded {
+        context = Context("", known.root, known.platform, known.channel, known.minecraft, known.github, known.curseforge)
+        for planned in known.plugins {
+            configured[text.key(planned.name)] = true
+        }
+    }
+
+    let plugins: [Plugin] = []
+    let others: [str] = []
+    for plugin in installed.scan(folder) {
+        if plugin.name != null {
+            plugins.push(plugin)
+        } else {
+            others.push(plugin.fileName)
+        }
+    }
+    if plugins.len() == 0 {
+        ui.say("There are no plugin jars in {folder}.")
+        return Ok(0)
+    }
+
+    ui.step(out, "Looking for {plugins.len()} plugin{if plugins.len() == 1 { "" } else { "s" }} in {detect.shown().len()} stores")
+    let root = (loaded?.root) ?? paths.absolute(".")
+    let list = detect.run(plugins, context, paths.join(root, ".pluginupdater/detect"))
+    ui.clear()
+
+    let missing: [str] = []
+    for entry in list {
+        ui.say("")
+        let name = entry.plugin.name ?? entry.plugin.fileName
+        show(out, entry, configured.has(text.key(name)))
+        if let found = entry.found {
+            ui.info("{text.pad("", 11)}  -> {found.link}")
+        } else {
+            missing.push(name)
+        }
+    }
+    ui.say("")
+
+    ui.success(out, "Found {list.len() - missing.len()} of {list.len()} plugins in at least one store")
+    if missing.len() > 0 {
+        ui.info("Not found anywhere, or only plugins with the same name: {missing.join(", ")}")
+    }
+    ui.detail(out, "'same file': the store has this exact jar. 'same plugin': its newest jar has the same main class. 'by name' alone is not trusted.")
+    if others.len() > 0 {
+        ui.info("Not plugins (no plugin.yml): {others.join(", ")}")
+    }
+
+    let blocks: [str] = []
+    let names: [str] = []
+    for entry in list {
+        let name = entry.plugin.name ?? entry.plugin.fileName
+        if let found = entry.found {
+            if !configured.has(text.key(name)) {
+                let fields: [(str, str)] = [("url", found.link)]
+                if let asset = found.asset {
+                    fields.push(("asset", asset))
+                }
+                blocks.push(writer.entry(name, fields))
+                names.push(name)
+            }
+        }
+    }
+    if blocks.len() == 0 {
+        if values.flag("write") {
+            ui.info("Nothing new to add to {path}")
+        }
+        return Ok(0)
+    }
+    if !values.flag("write") {
+        ui.info("Run 'pluginupdater detect --write' to add {blocks.len()} of them to {path}")
+        return Ok(0)
+    }
+    var existing: str? = null
+    if fs.isFile(path) {
+        existing = fs.readText(path)?
+    } else if let given = values.text("plugins") {
+        existing = writer.Template.replace("plugins-folder = \"plugins\"", "plugins-folder = {writer.string(given)}")
+    }
+    fs.writeText(path, writer.add(existing, blocks)?)?
+    ui.success(out, "Added {names.join(", ")} to {paths.absolute(path)}")
+    return Ok(0)
+}

@@ -1,0 +1,75 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// The shapes stores and commands exchange. Stores are plain packages with the same functions (see core/stores.qz),
+// so what Lua passed as loose tables is declared here.
+package net.blueva.pluginupdater.core.model
+
+/// A plugin jar found in the plugins folder; a jar with no descriptor has no name.
+pub struct Plugin {
+    path: str
+    fileName: str
+    name: str?
+    version: str?
+    website: str?
+    main: str?
+}
+
+/// A reference to a project in one store, parsed from its link: the store's name and its own fields
+/// (hangar: owner, slug; modrinth: project; spigot: id; github: owner, repository; bukkit and curseforge: slug;
+/// direct: url or path).
+pub struct Ref {
+    store: str
+    fields: Map<str, str>
+}
+
+impl Ref {
+    pub fn get(self, key: str) -> str {
+        return self.fields.get(key) ?? ""
+    }
+}
+
+/// What a store needs to pick a build for one plugin.
+pub struct Context {
+    name: str
+    root: str
+    platform: str
+    channel: str
+    minecraft: str? = null
+    github: str? = null
+    curseforge: str? = null
+    asset: str? = null
+}
+
+/// The newest build a store offers. A build is a url to download or a path on disk; hashes map sha512, sha256, sha1
+/// or md5 to a hex digest; unnamed says the download's own file name is meaningless (the plugin.yml names the file).
+/// external is set by a store whose project is hosted elsewhere: the link to follow instead.
+pub struct Release {
+    id: str? = null
+    version: str? = null
+    url: str? = null
+    path: str? = null
+    fileName: str? = null
+    hashes: Map<str, str> = Map()
+    headers: [(str, str)] = []
+    unnamed: bool = false
+    external: str? = null
+}
+
+/// What detect learns from searching one store for an installed plugin.
+pub struct Found {
+    link: str
+    title: str
+    exact: bool = false
+    hints: [str] = []
+    note: str? = null
+    unusable: bool = false
+    asset: str? = null
+    slug: str? = null
+    confirmed: bool = false
+    other: bool = false
+}

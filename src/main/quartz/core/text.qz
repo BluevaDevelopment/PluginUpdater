@@ -1,0 +1,70 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Small string helpers shared by stores and commands.
+package net.blueva.pluginupdater.core.text
+
+import org.quartzlang.http.percentDecode
+import org.quartzlang.regex.*
+import org.quartzlang.text.globMatch
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+/// A name reduced to letters and digits, for comparing 'Luck Perms' with 'luckperms'.
+pub fn key(value: str) -> str {
+    return pattern(r"[^a-z0-9]").replaceAll(value.lower(), "")
+}
+
+/// True when name matches a glob with * and ?, ignoring case.
+pub fn glob(globPattern: str, name: str) -> bool {
+    return globMatch(globPattern.lower(), name.lower())
+}
+
+/// The file name at the end of a URL, without its query.
+pub fn fileName(url: str) -> str? {
+    let found = pattern(r"^[^?#]*/([^/?#]+)").find(url) ?? return null
+    let raw = found.group(1) ?? return null
+    return match percentDecode(raw) {
+        Ok(decoded) => decoded
+        Err(_) => raw
+    }
+}
+
+/// A string safe as a file name.
+pub fn safeFileName(value: str) -> str {
+    return pattern(r"[^A-Za-z0-9.\-_+]").replaceAll(value, "_")
+}
+
+/// Percent-encodes a query parameter, leaving only unreserved characters.
+pub fn encode(value: str) -> str {
+    return org.quartzlang.http.percentEncode(value)
+}
+
+/// Pads text to width, counting what is printed rather than escape codes.
+pub fn pad(value: str, width: int) -> str {
+    let shown = pattern(r"\x1b\[[0-9;]*m").replaceAll(value, "")
+    if shown.len() >= width {
+        return value
+    }
+    return value + " ".repeat(width - shown.len())
+}
+
+/// The first letter in upper case.
+pub fn capitalize(value: str) -> str {
+    if value.len() == 0 {
+        return value
+    }
+    return value.slice(0, 1).upper() + value.slice(1, value.len())
+}
+
+/// Text before the first occurrence of a separator, or all of it.
+pub fn before(value: str, separator: str) -> str {
+    let index = value.find(separator) ?? return value
+    return value.slice(0, index)
+}

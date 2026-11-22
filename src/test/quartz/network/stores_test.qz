@@ -1,0 +1,53 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Asks the real stores for well-known plugins, so a change in their APIs shows up here. Only with -Pnetwork.
+package net.blueva.pluginupdater.network.stores_test
+
+import net.blueva.pluginupdater.core.model.{Context, Release}
+import net.blueva.pluginupdater.core.stores
+import net.blueva.pluginupdater.core.system
+import net.blueva.pluginupdater.support.check
+
+fn latest(url: str, name: str) -> Release {
+    let target = stores.resolve(url) ?? panic("{url} is no link")
+    let context = Context(name, ".", "paper", "release", github = system.env("GITHUB_TOKEN"), curseforge = system.env("CURSEFORGE_API_KEY"))
+    let release = stores.latest(target, context).unwrap() ?? panic("{url} has no release")
+    assert(release.id != null && release.url != null, "{url} gave no build id or download")
+    return release
+}
+
+@test
+fn hangar() {
+    let release = latest("https://hangar.papermc.io/ViaVersion/ViaVersion", "ViaVersion")
+    assert(release.hashes.has("sha256") && (release.fileName ?? "").endsWith(".jar"), "hangar release")
+}
+
+@test
+fn modrinth() {
+    let release = latest("https://modrinth.com/plugin/luckperms", "LuckPerms")
+    assert(release.hashes.has("sha1") && (release.fileName ?? "").startsWith("LuckPerms-Bukkit"), release.fileName ?? "")
+}
+
+@test
+fn spigot() {
+    assert(latest("https://www.spigotmc.org/resources/vault.34315/", "Vault").version != null, "spigot version")
+}
+
+@test
+fn github() {
+    let name = latest("https://github.com/EssentialsX/Essentials", "Essentials").fileName ?? ""
+    assert(name.startsWith("EssentialsX-") && name.endsWith(".jar"), name)
+}
+
+@test
+fn bukkitAndCurseforge() {
+    let bukkit = latest("https://dev.bukkit.org/projects/worldedit", "WorldEdit")
+    assert(bukkit.hashes.has("md5") && (bukkit.fileName ?? "").startsWith("worldedit-bukkit"), bukkit.fileName ?? "")
+    let curseforge = latest("https://www.curseforge.com/minecraft/bukkit-plugins/worldedit", "WorldEdit")
+    check.equal(bukkit.fileName ?? "", curseforge.fileName ?? "", "curseforge mirrors bukkit")
+}

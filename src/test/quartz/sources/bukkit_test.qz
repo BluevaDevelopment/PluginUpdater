@@ -1,0 +1,30 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.sources.bukkit_test
+
+import net.blueva.pluginupdater.sources.bukkit
+import net.blueva.pluginupdater.sources.curseforge
+
+@test
+fn bukkitKnowsItsLinks() {
+    let found = bukkit.parse("https://dev.bukkit.org/projects/worldedit/files") ?? panic("no ref")
+    assert(found.store == "bukkit", "store")
+    assert(found.get("slug") == "worldedit", "slug")
+    assert(bukkit.link(found) == "https://dev.bukkit.org/projects/worldedit", "link")
+    let old = bukkit.parse("https://dev.bukkit.org/bukkit-plugins/vault/") ?? panic("no old ref")
+    assert(old.get("slug") == "vault", "old slug")
+}
+
+@test
+fn curseforgeKnowsItsLinks() {
+    let found = curseforge.parse("https://www.curseforge.com/minecraft/bukkit-plugins/worldedit") ?? panic("no ref")
+    assert(found.store == "curseforge", "store")
+    assert(found.get("slug") == "worldedit", "slug")
+    assert(curseforge.link(found) == "https://www.curseforge.com/minecraft/bukkit-plugins/worldedit", "link")
+    assert(curseforge.parse("https://dev.bukkit.org/projects/worldedit") == null, "other store")
+}

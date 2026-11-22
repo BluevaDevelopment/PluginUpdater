@@ -1,0 +1,118 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Reading and comparing the version strings plugins carry, which follow no single scheme:
+// '5.4.137', 'v2.22.0', '7.4.6-beta-01', '2.20.1-SNAPSHOT'.
+package net.blueva.pluginupdater.core.versions
+
+import org.quartzlang.regex.*
+
+/// The numbers, stability and trailing build number of a version.
+pub struct Version {
+    numbers: [int]
+    rank: int
+    build: int?
+}
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+/// Lower is less stable; a word that is none of these leaves the version a release.
+fn rankOf(word: str) -> int {
+    return match word {
+        "snapshot" => -4
+        "nightly" => -4
+        "dev" => -4
+        "alpha" => -3
+        "beta" => -2
+        "pre" => -1
+        "rc" => -1
+        "cr" => -1
+        _ => 0
+    }
+}
+
+/// The least stable rank among the words of a text, 0 when none is a stability word.
+pub fn stability(text: str) -> int {
+    var rank = 0
+    for found in pattern(r"[a-z]+").findAll(text.lower()) {
+        let word = rankOf(found.text)
+        if word < rank {
+            rank = word
+        }
+    }
+    return rank
+}
+
+/// The version a text spells, or null when it has no number.
+pub fn parse(text: str) -> Version? {
+    let lower = text.lower()
+    let start = pattern(r"\d").find(lower) ?? return null
+    let split = pattern(r"(?s)^([\d.]*\d)(.*)$").find(lower.slice(start.start, lower.len())) ?? return null
+    let head = split.group(1) ?? return null
+    let rest = split.group(2) ?? ""
+    var numbers: [int] = []
+    for piece in head.split(".") {
+        if let number = piece.toInt() {
+            numbers.push(number)
+        }
+    }
+    var build: int? = null
+    if let last = pattern(r"(\d+)\D*$").find(rest) {
+        build = (last.group(1) ?? "").toInt()
+    }
+    return Version(numbers, stability(rest), build)
+}
+
+/// -1, 0 or 1 as a is older, the same as, or newer than b; null when either cannot be read.
+pub fn compare(a: str, b: str) -> int? {
+    let left = parse(a) ?? return null
+    let right = parse(b) ?? return null
+    let count = if left.numbers.len() > right.numbers.len() { left.numbers.len() } else { right.numbers.len() }
+    for index in 0..count {
+        let x = if index < left.numbers.len() { left.numbers[index] } else { 0 }
+        let y = if index < right.numbers.len() { right.numbers[index] } else { 0 }
+        if x != y {
+            return if x < y { -1 } else { 1 }
+        }
+    }
+    if left.rank != right.rank {
+        return if left.rank < right.rank { -1 } else { 1 }
+    }
+    if left.rank < 0 {
+        if let x = left.build {
+            if let y = right.build {
+                if x != y {
+                    return if x < y { -1 } else { 1 }
+                }
+            }
+        }
+    }
+    return 0
+}
+
+/// The first thing that looks like a version inside a longer text, such as a file's title.
+pub fn find(text: str) -> str? {
+    if let found = pattern(r"\d+\.\d+[A-Za-z0-9.\-]*").find(text) {
+        return found.text
+    }
+    if let found = pattern(r"\d+").find(text) {
+        return found.text
+    }
+    return null
+}
+
+/// The stability words a store might use, as a rank: 0 release, -2 beta, -3 alpha.
+pub fn channelRank(name: str) -> int? {
+    return match name {
+        "release" => 0
+        "beta" => -2
+        "alpha" => -3
+        _ => null
+    }
+}

@@ -1,0 +1,45 @@
+name: Set up Quartz
+description: JDK 25, the Embed Gradle plugin, the Quartz JVM bindings and a libquartz for every platform.
+
+runs:
+  using: composite
+  steps:
+    - name: Pick the Quartz release
+      id: quartz
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: echo "tag=$(gh release view --repo QuartzProject/Quartz --json tagName --jq .tagName)" >> "$GITHUB_OUTPUT"
+
+    - name: Check out Embed
+      uses: actions/checkout@v7
+      with:
+        repository: QuartzProject/Embed
+        path: .deps/embed
+
+    - name: Check out Quartz
+      uses: actions/checkout@v7
+      with:
+        repository: QuartzProject/Quartz
+        ref: ${{ steps.quartz.outputs.tag }}
+        path: .deps/quartz
+
+    - name: Fetch libquartz for every platform
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: .github/scripts/fetch-quartz.sh "${{ steps.quartz.outputs.tag }}"
+
+    - name: Set up JDK 25
+      uses: actions/setup-java@v6
+      with:
+        distribution: temurin
+        java-version: 25
+
+    - name: Remember where Quartz is
+      shell: bash
+      run: |
+        {
+          echo "QUARTZ_EMBED=$PWD/.deps/embed"
+          echo "QUARTZ_JVM=$PWD/.deps/quartz/bindings/jvm"
+        } >>"$GITHUB_ENV"

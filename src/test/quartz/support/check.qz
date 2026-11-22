@@ -1,0 +1,42 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Helpers for the suites: assertions that say what was expected, and scratch folders and jars.
+package net.blueva.pluginupdater.support.check
+
+import net.blueva.pluginupdater.core.paths
+import org.quartzlang.embed.fs
+import org.quartzlang.zip.*
+
+/// Fails unless both values are equal, showing them.
+pub fn equal<T: Eq + Show>(expected: T, actual: T, label: str = "") {
+    assert(expected == actual, "{label}: expected {expected}, got {actual}")
+}
+
+/// Fails unless the result is an error whose message holds text.
+pub fn fails<T>(text: str, result: Result<T, str>) {
+    match result {
+        Ok(_) => panic("expected a failure mentioning '{text}'")
+        Err(why) => assert(why.contains(text), "expected a failure mentioning '{text}', got '{why}'")
+    }
+}
+
+/// A new empty folder inside the granted root, as an absolute path.
+pub fn folder(name: str) -> str {
+    let path = paths.absolute("build/quartz-test/{name}")
+    let _ = fs.delete(path)
+    let _ = fs.createDirectories(path)
+    return path
+}
+
+/// Writes a plugin jar with a plugin.yml and returns its path.
+pub fn jar(dir: str, fileName: str, name: str, version: str) -> str {
+    let path = "{dir}/{fileName}"
+    let entry = ZipEntry("plugin.yml", "name: {name}\nversion: {version}\nmain: test.Main\n".toBytes())
+    let _ = fs.writeBytes(path, writeZip([entry]))
+    return path
+}

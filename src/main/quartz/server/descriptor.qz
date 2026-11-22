@@ -1,0 +1,104 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// What a plugin jar says about itself: its name, version and website, read from paper-plugin.yml, plugin.yml,
+// bungee.yml or velocity-plugin.json.
+package net.blueva.pluginupdater.server.descriptor
+
+import org.quartzlang.bytes.*
+import org.quartzlang.data.*
+import org.quartzlang.embed.fs
+import org.quartzlang.regex.*
+import org.quartzlang.zip.*
+
+/// The identity a jar declares, and which of its files said so.
+pub struct Descriptor {
+    name: str
+    version: str?
+    website: str?
+    main: str?
+    file: str
+}
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+fn scalar(raw: str) -> str {
+    let value = raw.trim()
+    let quote = value.slice(0, 1)
+    if quote == "\"" || quote == "'" {
+        let rest = value.slice(1, value.len())
+        if let end = rest.find(quote) {
+            return rest.slice(0, end)
+        }
+        return rest
+    }
+    return pattern(r"\s+#.*$").replace(value, "").trim()
+}
+
+/// The top-level scalar keys of a plugin descriptor. Nested blocks and lists are skipped; only what identifies the
+/// plugin is needed.
+pub fn parseDescriptor(source: str) -> Map<str, str> {
+    let values: Map<str, str> = Map()
+    let line = pattern(r"^([A-Za-z0-9_\-]+):\s*(.*)$")
+    let carriage = pattern(r"\r$")
+    for raw in source.split("\n") {
+        let found = line.find(carriage.replace(raw, "")) ?? continue
+        let key = found.group(1) ?? continue
+        let value = found.group(2) ?? ""
+        if value == "" || values.has(key) {
+            continue
+        }
+        let first = value.slice(0, 1)
+        if first == "[" {
+            let inner = pattern(r"^\[\s*([^,\]]*)").find(value)
+            values[key] = scalar(inner?.group(1) ?? "")
+        } else if first != "|" && first != ">" && first != "&" {
+            values[key] = scalar(value)
+        }
+    }
+    return values
+}
+
+fn fromYaml(values: Map<str, str>, file: str) -> Descriptor? {
+    let name = values.get("name") ?? return null
+    if name == "" {
+        return null
+    }
+    return Descriptor(name, values.get("version"), values.get("website"), values.get("main"), file)
+}
+
+fn entryText(entries: [ZipEntry], name: str) -> str? {
+    let entry = entries.find((e) => e.name == name) ?? return null
+    return entry.data.toStr()
+}
+
+/// The descriptor of a jar, or null when it is not a plugin (or not a readable zip).
+pub fn read(jar: str) -> Descriptor? {
+    let data = fs.readBytes(jar).unwrapOr(bytesOf([]))
+    let entries = readZip(data).unwrapOr([])
+    for file in ["paper-plugin.yml", "plugin.yml", "bungee.yml"] {
+        if let source = entryText(entries, file) {
+            if let found = fromYaml(parseDescriptor(source), file) {
+                return found
+            }
+        }
+    }
+    if let source = entryText(entries, "velocity-plugin.json") {
+        match parseJson(source) {
+            Ok(parsed) => {
+                let id = parsed.get("id")?.asStr() ?? return null
+                let name = parsed.get("name")?.asStr() ?? id
+                let url = parsed.get("url")?.asStr()
+                return Descriptor(name, parsed.get("version")?.asStr(), url, parsed.get("main")?.asStr(), "velocity-plugin.json")
+            }
+            Err(_) => {}
+        }
+    }
+    return null
+}

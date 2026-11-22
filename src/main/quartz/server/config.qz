@@ -1,0 +1,239 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// pluginupdater.toml: where the plugins are, and where each one comes from.
+package net.blueva.pluginupdater.server.config
+
+import net.blueva.pluginupdater.core.errors
+import net.blueva.pluginupdater.core.model.{Context, Ref}
+import net.blueva.pluginupdater.core.paths
+import net.blueva.pluginupdater.core.stores
+import net.blueva.pluginupdater.core.system
+import org.quartzlang.data.*
+import org.quartzlang.embed.fs
+
+pub const File = "pluginupdater.toml"
+
+const Settings = "allow-downgrade, backups, changelog, channel, minecraft, parallel, platform, plugins-folder"
+const EntryKeys = "allow-downgrade, asset, channel, enabled, file, url"
+
+/// One configured plugin, with the store its link belongs to.
+pub struct Entry {
+    name: str
+    url: str
+    reference: Ref
+    channel: str
+    asset: str?
+    file: str?
+    enabled: bool
+    allowDowngrade: bool
+}
+
+/// A checked configuration, with every path made absolute.
+pub struct Config {
+    path: str
+    root: str
+    pluginsFolder: str
+    changelog: str
+    data: str
+    platform: str
+    channel: str
+    minecraft: str?
+    backups: int
+    parallel: int
+    github: str?
+    curseforge: str?
+    plugins: [Entry]
+}
+
+fn platforms() -> [str] {
+    return ["paper", "velocity", "waterfall"]
+}
+
+fn channels() -> [str] {
+    return ["release", "beta", "alpha"]
+}
+
+fn none() -> [str] {
+    return []
+}
+
+fn kindOf(value: Value) -> str {
+    return match value {
+        Value.Str(_) => "string"
+        Value.Int(_) => "number"
+        Value.Float(_) => "number"
+        Value.Bool(_) => "boolean"
+        Value.Table(_) => "table"
+        Value.List(_) => "list"
+        Value.Null => "null"
+    }
+}
+
+fn check(file: str, where: str, value: Value, kind: str, allowed: [str]) -> Result<(), str> {
+    if kindOf(value) != kind {
+        return Err("{file}: {where} must be a {kind}")
+    }
+    if allowed.len() > 0 {
+        let text = value.asStr() ?? ""
+        if !allowed.contains(text) {
+            return Err("{file}: {where} can't be '{text}' (choose from {allowed.sorted().join(", ")})")
+        }
+    }
+    return Ok(())
+}
+
+fn number(value: Value) -> int {
+    if let whole = value.asInt() {
+        return whole
+    }
+    return (value.asFloat() ?? 0.0).floor() as int
+}
+
+fn entry(file: str, name: str, raw: Value, settings: Map<str, Value>) -> Result<Entry, str> {
+    let where = "plugins.{name}"
+    var fields: Map<str, Value> = Map()
+    match raw {
+        Value.Str(link) => {
+            fields["url"] = Value.Str(link)
+        }
+        Value.Table(given) => {
+            fields = given
+        }
+        _ => {
+            return Err("{file}: {where} must be a link or a table")
+        }
+    }
+    for key, value in fields {
+        var kind = ""
+        if key == "url" || key == "channel" || key == "asset" || key == "file" {
+            kind = "string"
+        } else if key == "enabled" || key == "allow-downgrade" {
+            kind = "boolean"
+        } else {
+            return Err("{file}: {where} has no setting '{key}' (known: {EntryKeys})")
+        }
+        check(file, "{where}.{key}", value, kind, if key == "channel" { channels() } else { none() })?
+    }
+    let url = fields.get("url")?.asStr() ?? return Err("{file}: {where} needs a url")
+    let target = stores.resolve(url) ?? return Err("{file}: {where}: no store understands '{url}'. See 'pluginupdater sources'.")
+    var allowDowngrade = settings.get("allow-downgrade")?.asBool() ?? false
+    if let own = fields.get("allow-downgrade")?.asBool() {
+        allowDowngrade = own
+    }
+    let channel = fields.get("channel")?.asStr() ?? settings.get("channel")?.asStr() ?? "release"
+    let enabled = fields.get("enabled")?.asBool() ?? true
+    return Ok(Entry(name, url, target, channel, fields.get("asset")?.asStr(), fields.get("file")?.asStr(), enabled, allowDowngrade))
+}
+
+fn fill(settings: Map<str, Value>, key: str, value: Value) {
+    if !settings.has(key) {
+        settings[key] = value
+    }
+}
+
+fn tableOf(document: Value, key: str) -> Map<str, Value> {
+    if let found = document.get(key) {
+        match found {
+            Value.Table(entries) => {
+                return entries
+            }
+            _ => {}
+        }
+    }
+    return Map()
+}
+
+/// Reads and checks a configuration, from the text of the file at path.
+pub fn parse(path: str, source: str) -> Result<Config, str> {
+    let file = paths.name(path)
+    let document = errors.context(file, parseToml(source))?
+    match document {
+        Value.Table(top) => {
+            for key, _ in top {
+                if key != "settings" && key != "tokens" && key != "plugins" {
+                    return Err("{file}: unknown section '{key}' (known: plugins, settings, tokens)")
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let settings = tableOf(document, "settings")
+    for key, value in settings {
+        let allowed = if key == "platform" { platforms() } else if key == "channel" { channels() } else { none() }
+        var kind = "string"
+        if key == "backups" || key == "parallel" {
+            kind = "number"
+        } else if key == "allow-downgrade" {
+            kind = "boolean"
+        } else if key != "plugins-folder" && key != "changelog" && key != "platform" && key != "channel" && key != "minecraft" {
+            return Err("{file}: unknown setting '{key}' (known: {Settings})")
+        }
+        check(file, "settings.{key}", value, kind, allowed)?
+    }
+    fill(settings, "plugins-folder", Value.Str("plugins"))
+    fill(settings, "changelog", Value.Str("changelog.md"))
+    fill(settings, "platform", Value.Str("paper"))
+    fill(settings, "channel", Value.Str("release"))
+    fill(settings, "backups", Value.Int(5))
+    fill(settings, "allow-downgrade", Value.Bool(false))
+    fill(settings, "parallel", Value.Int(8))
+
+    let tokens = tableOf(document, "tokens")
+    for key, value in tokens {
+        if key != "github" && key != "curseforge" {
+            return Err("{file}: unknown token '{key}' (known: curseforge, github)")
+        }
+        check(file, "tokens.{key}", value, "string", none())?
+    }
+
+    let plugins: [Entry] = []
+    for name, raw in tableOf(document, "plugins") {
+        plugins.push(entry(file, name, raw, settings)?)
+    }
+    plugins.sortBy((e) => e.name.lower())
+
+    let absolute = paths.absolute(path)
+    let root = paths.parent(absolute) ?? system.workingDirectory()
+    var github = tokens.get("github")?.asStr() ?? ""
+    if github == "" {
+        github = system.env("GITHUB_TOKEN") ?? ""
+    }
+    var curseforge = tokens.get("curseforge")?.asStr() ?? ""
+    if curseforge == "" {
+        curseforge = system.env("CURSEFORGE_API_KEY") ?? ""
+    }
+    return Ok(Config(
+        absolute,
+        root,
+        paths.join(root, settings.get("plugins-folder")?.asStr() ?? "plugins"),
+        paths.join(root, settings.get("changelog")?.asStr() ?? "changelog.md"),
+        paths.join(root, ".pluginupdater"),
+        settings.get("platform")?.asStr() ?? "paper",
+        settings.get("channel")?.asStr() ?? "release",
+        settings.get("minecraft")?.asStr(),
+        number(settings.get("backups") ?? Value.Int(5)),
+        number(settings.get("parallel") ?? Value.Int(8)),
+        if github == "" { null } else { github },
+        if curseforge == "" { null } else { curseforge },
+        plugins,
+    ))
+}
+
+/// The configuration at path; fails with a hint when there is none.
+pub fn load(path: str) -> Result<Config, str> {
+    if !fs.isFile(path) {
+        return Err("there is no {path}. Run 'pluginupdater init' to write one, or 'pluginupdater detect --write' to fill it from the plugins you have.")
+    }
+    return parse(path, fs.readText(path)?)
+}
+
+/// What a store needs to pick a build for one entry.
+pub fn context(config: Config, entry: Entry) -> Context {
+    return Context(entry.name, config.root, config.platform, entry.channel, config.minecraft, config.github, config.curseforge, entry.asset)
+}

@@ -1,0 +1,95 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// SpigotMC, read through the Spiget API: spigotmc.org itself sits behind a browser check that tools cannot pass.
+package net.blueva.pluginupdater.sources.spigot
+
+import net.blueva.pluginupdater.core.model.*
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.text
+import org.quartzlang.data.*
+import org.quartzlang.regex.*
+
+pub const Name = "spigot"
+pub const Label = "SpigotMC"
+pub const Example = "https://www.spigotmc.org/resources/<name>.<id>/"
+
+const Api = "https://api.spiget.org/v2"
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+pub fn parse(url: str) -> Ref? {
+    let found = pattern(r"^https?://[A-Za-z0-9.]*spigotmc\.org/resources/([^/?#]+)").find(url) ?? return null
+    let path = found.group(1) ?? return null
+    var id: str? = null
+    if let dotted = pattern(r"\.(\d+)$").find(path) {
+        id = dotted.group(1)
+    } else if let plain = pattern(r"^(\d+)$").find(path) {
+        id = plain.group(1)
+    }
+    let value = id ?? return null
+    let fields: Map<str, str> = Map()
+    fields["id"] = value
+    return Ref(Name, fields)
+}
+
+pub fn link(resource: Ref) -> str {
+    return "https://www.spigotmc.org/resources/{resource.get("id")}/"
+}
+
+/// Spiget's mirror names files by resource id, so the name comes from the jar's plugin.yml instead. A resource hosted
+/// elsewhere comes back with `external` set, for the caller to follow.
+pub fn latest(resource: Ref, _ctx: Context) -> Result<Release?, str> {
+    let id = resource.get("id")
+    let found = net.jsonOrNull("{Api}/resources/{id}")?
+    let info = found ?? return Err("SpigotMC has no resource {id}")
+    let name = info.get("name")?.asStr() ?? id
+    if info.get("premium")?.asBool() == true {
+        return Err("{name} is a premium resource; SpigotMC only lets buyers download it, from a browser")
+    }
+    if info.get("external")?.asBool() == true {
+        let url = info.get("file")?.get("externalUrl")?.asStr() ?? ""
+        return Ok(Release(external = url))
+    }
+    let newest = net.json("{Api}/resources/{id}/versions/latest")?
+    let versionId = newest.get("id")
+    return Ok(Release(
+        id = if let v = versionId { "{v.asInt() ?? 0}" } else { null },
+        version = newest.get("name")?.asStr(),
+        url = "{Api}/resources/{id}/download",
+        unnamed = true,
+    ))
+}
+
+/// Resource titles often carry tags, as in 'Name [1.8 - 1.21]' or 'Name | Short pitch'.
+pub fn title(name: str) -> str {
+    let plain = pattern(r"\([^)]*\)").replaceAll(pattern(r"\[[^\]]*\]").replaceAll(name, ""), "")
+    return pattern(r"^[^|:]*").find(plain)?.text ?? name
+}
+
+pub fn search(plugin: Plugin, _ctx: Context) -> Result<Found?, str> {
+    let name = plugin.name ?? return Ok(null)
+    let url = "{Api}/search/resources/{text.encode(name)}?field=name&size=10&sort=-downloads&fields=id,name,premium,external"
+    let found = net.jsonOrNull(url)?
+    let list = found ?? return Ok(null)
+    let key = text.key(name)
+    for index in 0..list.len() {
+        let resource = list.item(index) ?? continue
+        let resourceName = resource.get("name")?.asStr() ?? ""
+        if text.key(title(resourceName)) != key {
+            continue
+        }
+        let fields: Map<str, str> = Map()
+        fields["id"] = "{resource.get("id")?.asInt() ?? 0}"
+        let premium = resource.get("premium")?.asBool() == true
+        let note: str? = if premium { "premium, cannot be downloaded" } else { null }
+        return Ok(Found(link(Ref(Name, fields)), resourceName, false, [], note, premium))
+    }
+    return Ok(null)
+}

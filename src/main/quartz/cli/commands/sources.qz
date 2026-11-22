@@ -1,0 +1,31 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// pluginupdater sources: the stores and the links each one understands.
+package net.blueva.pluginupdater.cli.commands.sources
+
+import net.blueva.pluginupdater.cli.command.{Command, Values}
+import net.blueva.pluginupdater.core.stores
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.ui
+
+pub fn declaration() -> Command {
+    return Command("sources", "List the stores plugins can come from, with the links they take")
+}
+
+pub fn execute(_out: ui.Ui, _values: Values) -> Result<int, str> {
+    var width = 0
+    for store in stores.all() {
+        if store.name.len() > width {
+            width = store.name.len()
+        }
+    }
+    for store in stores.all() {
+        ui.say("{text.pad(store.name, width)}  {text.pad(store.label, 12)}  {store.example}")
+    }
+    return Ok(0)
+}

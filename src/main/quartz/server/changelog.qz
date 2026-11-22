@@ -1,0 +1,60 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// The changelog: one section per run that changed something, newest first, with a line per plugin:
+// '- Name old -> new'.
+package net.blueva.pluginupdater.server.changelog
+
+import net.blueva.pluginupdater.core.errors
+import org.quartzlang.embed.fs
+import org.quartzlang.regex.*
+
+const Title = "# Changelog"
+
+/// One plugin that changed; from is null for a plugin that was not installed before.
+pub struct Change {
+    name: str
+    from: str?
+    to: str
+}
+
+/// The line for one change; a plugin that was not installed before shows '(new)'.
+pub fn line(change: Change) -> str {
+    return "- {change.name} {change.from ?? "(new)"} -> {change.to}"
+}
+
+/// The section for one run.
+pub fn section(date: str, changes: [Change]) -> str {
+    let lines = ["## {date}", ""]
+    for change in changes {
+        lines.push(line(change))
+    }
+    return lines.join("\n")
+}
+
+/// The changelog text with a new section on top of what previous runs wrote.
+pub fn prepend(existing: str?, date: str, changes: [Change]) -> str {
+    let created = section(date, changes)
+    var body = existing ?? ""
+    if body.startsWith(Title) {
+        body = body.slice(Title.len(), body.len())
+    }
+    body = compileRegex(r"^\s+").unwrap().replace(body, "")
+    if body == "" {
+        return "{Title}\n\n{created}\n"
+    }
+    return "{Title}\n\n{created}\n\n{body}"
+}
+
+/// Adds a section to the file at path.
+pub fn write(path: str, date: str, changes: [Change]) -> Result<int, str> {
+    var existing: str? = null
+    if fs.isFile(path) {
+        existing = errors.orNull(fs.readText(path))
+    }
+    return fs.writeText(path, prepend(existing, date, changes))
+}

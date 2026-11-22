@@ -1,0 +1,58 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// The jars in a plugins folder and the plugins they hold.
+package net.blueva.pluginupdater.server.installed
+
+import host
+import net.blueva.pluginupdater.core.model.Plugin
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.server.descriptor
+import org.quartzlang.embed.fs
+
+/// Every jar in folder, sorted by file name. A jar with no descriptor has no name.
+pub fn scan(folder: str) -> [Plugin] {
+    let plugins: [Plugin] = []
+    for fileName in fs.list(folder).unwrapOr([]) {
+        let path = "{folder}/{fileName}"
+        if fileName.lower().endsWith(".jar") && fs.isFile(path) {
+            if let found = descriptor.read(path) {
+                plugins.push(Plugin(path, fileName, found.name, found.version, found.website, found.main))
+            } else {
+                plugins.push(Plugin(path, fileName, null, null, null, null))
+            }
+        }
+    }
+    return plugins
+}
+
+/// The hex digest of an installed jar: sha1, sha256, sha512 or md5.
+pub fn digest(plugin: Plugin, algorithm: str) -> str {
+    return host.digest(plugin.path, algorithm)
+}
+
+/// The installed jar of a configured plugin: by its file glob when one is given, otherwise by the name in its
+/// descriptor. Null when it is not installed.
+pub fn find(plugins: [Plugin], name: str, file: str?) -> Result<Plugin?, str> {
+    let matches: [Plugin] = []
+    for plugin in plugins {
+        var same = false
+        if let glob = file {
+            same = text.glob(glob, plugin.fileName)
+        } else if let installedName = plugin.name {
+            same = text.key(installedName) == text.key(name)
+        }
+        if same {
+            matches.push(plugin)
+        }
+    }
+    if matches.len() > 1 {
+        let names = matches.map((p) => p.fileName).join(", ")
+        return Err("several jars hold {name} ({names}); remove the extra ones or set file to pick one")
+    }
+    return Ok(matches.pop())
+}

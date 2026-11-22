@@ -1,0 +1,20 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.sources.direct_test
+
+import net.blueva.pluginupdater.sources.direct
+
+@test
+fn anyOtherLinkOrPathIsDirect() {
+    let url = direct.parse("https://ci.example.com/job/x/lastSuccessfulBuild/artifact/X.jar") ?? panic("no url ref")
+    assert(url.store == "direct", "store")
+    assert(url.get("url") == "https://ci.example.com/job/x/lastSuccessfulBuild/artifact/X.jar", "url")
+    assert((direct.parse("file:///opt/jars/X.jar") ?? panic("no file ref")).get("path") == "/opt/jars/X.jar", "file url")
+    assert((direct.parse("./jars/X.jar") ?? panic("no relative ref")).get("path") == "./jars/X.jar", "relative path")
+    assert(direct.parse("LuckPerms") == null, "a bare word is no link")
+}

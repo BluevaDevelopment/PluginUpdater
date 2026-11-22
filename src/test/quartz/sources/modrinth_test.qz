@@ -1,0 +1,18 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.sources.modrinth_test
+
+import net.blueva.pluginupdater.sources.modrinth
+
+@test
+fn modrinthKnowsItsLinks() {
+    let parsed = modrinth.parse("https://modrinth.com/plugin/luckperms/versions").unwrap()
+    assert(parsed.get("project") == "luckperms", "project")
+    assert(modrinth.link(parsed) == "https://modrinth.com/plugin/luckperms", "link back")
+    assert(modrinth.parse("https://hangar.papermc.io/a/b") == null, "other store")
+}

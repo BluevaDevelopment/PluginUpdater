@@ -1,0 +1,63 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.sources.github_test
+
+import net.blueva.pluginupdater.core.model.Context
+import net.blueva.pluginupdater.sources.github
+
+fn assets(names: [str]) -> [github.Asset] {
+    let list: [github.Asset] = []
+    for name in names {
+        list.push(github.Asset(list.len() + 1, name, "", null))
+    }
+    return list
+}
+
+fn context(platform: str, asset: str?) -> Context {
+    return Context("x", "", platform, "release", asset = asset)
+}
+
+fn picked(list: [github.Asset], name: str, platform: str, asset: str?) -> str {
+    return match github.pickAsset(list, name, context(platform, asset)) {
+        Ok(found) => found?.name ?? "none"
+        Err(why) => "error: {why}"
+    }
+}
+
+@test
+fn linksParseAndComeBack() {
+    let found = github.parse("https://github.com/EssentialsX/Essentials.git") ?? panic("no ref")
+    assert(found.store == "github", "store")
+    assert(found.get("owner") == "EssentialsX", "owner")
+    assert(found.get("repository") == "Essentials", "repository")
+    assert(github.link(found) == "https://github.com/EssentialsX/Essentials", "link")
+    assert(github.parse("https://modrinth.com/plugin/x") == null, "other store")
+}
+
+@test
+fn theJarOfAReleaseIsPickedForThePluginAndPlatform() {
+    let essentials = assets(["EssentialsX-2.22.0.jar", "EssentialsXChat-2.22.0.jar", "EssentialsXSpawn-2.22.0.jar"])
+    assert(picked(essentials, "Essentials", "paper", null) == "EssentialsX-2.22.0.jar", "essentials")
+    assert(picked(essentials, "EssentialsChat", "paper", "EssentialsXChat-*.jar") == "EssentialsXChat-2.22.0.jar", "glob")
+
+    let geyser = assets(["Geyser-Spigot.jar", "Geyser-Velocity.jar", "Geyser-Fabric.jar", "Geyser-Standalone.jar"])
+    assert(picked(geyser, "Geyser-Spigot", "paper", null) == "Geyser-Spigot.jar", "geyser paper")
+    assert(picked(geyser, "Geyser", "velocity", null) == "Geyser-Velocity.jar", "geyser velocity")
+
+    let plain = assets(["Plugin-1.0.jar", "Plugin-1.0-sources.jar", "Plugin-1.0-javadoc.jar"])
+    assert(picked(plain, "Plugin", "paper", null) == "Plugin-1.0.jar", "sources and javadoc are skipped")
+}
+
+@test
+fn anAmbiguousReleaseAsksForAnAsset() {
+    let ambiguous = picked(assets(["One.jar", "Two.jar"]), "Other", "paper", null)
+    assert(ambiguous.contains("set asset"), ambiguous)
+    let essentials = assets(["EssentialsX-2.22.0.jar"])
+    let none = picked(essentials, "Essentials", "paper", "Nope*")
+    assert(none.contains("no jar of the release match asset 'Nope*'"), none)
+}

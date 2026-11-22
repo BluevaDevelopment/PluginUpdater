@@ -1,0 +1,61 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.server.descriptor_test
+
+import net.blueva.pluginupdater.server.descriptor
+import net.blueva.pluginupdater.support.check
+import org.quartzlang.embed.fs
+import org.quartzlang.zip.*
+
+fn write(path: str, name: str, content: str) {
+    let _ = fs.writeBytes(path, writeZip([ZipEntry(name, content.toBytes())]))
+}
+
+@test
+fn topLevelScalarsAreRead() {
+    let lines = [
+        "name: \"LuckPerms\"",
+        "version: '5.4.137' # the build",
+        "main: me.lucko.luckperms.bukkit.loader.BukkitLoaderPlugin",
+        "website: https://luckperms.net",
+        "authors: [Luck, Other]",
+        "commands:",
+        "  name: nested, not the plugin name",
+        "description: |",
+        "  A long text",
+    ]
+    let values = descriptor.parseDescriptor(lines.join("\r\n"))
+    check.equal("LuckPerms", values.get("name") ?? "", "name")
+    check.equal("5.4.137", values.get("version") ?? "", "version")
+    check.equal("https://luckperms.net", values.get("website") ?? "", "website")
+    check.equal("Luck", values.get("authors") ?? "", "authors")
+    check.equal(false, values.has("description"), "description")
+}
+
+@test
+fn jarsOfEveryPlatformAreRecognised() {
+    let dir = check.folder("descriptor")
+    let paper = "{dir}/paper.jar"
+    let _ = fs.writeBytes(paper, writeZip([
+        ZipEntry("paper-plugin.yml", "name: Paperish\nversion: 2.0\n".toBytes()),
+        ZipEntry("plugin.yml", "name: Legacy\nversion: 1.0\n".toBytes()),
+    ]))
+    check.equal("Paperish", (descriptor.read(paper) ?? panic("no descriptor")).name, "paper")
+
+    let velocity = "{dir}/velocity.jar"
+    write(velocity, "velocity-plugin.json", "\{\"id\":\"proxied\",\"name\":\"Proxied\",\"version\":\"3.1\",\"url\":\"https://example.com\"}")
+    let found = descriptor.read(velocity) ?? panic("no velocity descriptor")
+    check.equal("Proxied", found.name, "velocity name")
+    check.equal("3.1", found.version ?? "", "velocity version")
+    check.equal("https://example.com", found.website ?? "", "velocity website")
+
+    let library = "{dir}/library.jar"
+    write(library, "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
+    check.equal(true, descriptor.read(library) == null, "library")
+    let _ = fs.delete(dir)
+}

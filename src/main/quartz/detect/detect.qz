@@ -1,0 +1,206 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Looks for installed plugins in every store: by the jar's hash where the store can tell (an exact match), otherwise
+// by name. GitHub is only asked about repositories the plugin itself, or another store, links to. A plugin found
+// only by name is confirmed by downloading the store's jar and comparing the main class, since unrelated plugins
+// often share a name.
+package net.blueva.pluginupdater.detect.detect
+
+import net.blueva.pluginupdater.core.errors
+import net.blueva.pluginupdater.core.model.{Context, Found, Plugin}
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.paths
+import net.blueva.pluginupdater.core.stores
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.server.descriptor
+import net.blueva.pluginupdater.sources.bukkit
+import net.blueva.pluginupdater.sources.curseforge
+import net.blueva.pluginupdater.sources.github
+import net.blueva.pluginupdater.sources.hangar
+import net.blueva.pluginupdater.sources.modrinth
+import net.blueva.pluginupdater.sources.spigot
+import org.quartzlang.embed.fs
+
+/// What searching one store gave: a match, an error, or neither.
+pub struct Slot {
+    found: Found?
+    error: str?
+}
+
+/// For each plugin: what every store said, and the store and link chosen.
+pub struct Entry {
+    plugin: Plugin
+    slots: Map<str, Slot>
+    store: str?
+    found: Found?
+}
+
+/// The stores searched directly.
+fn searched() -> [str] {
+    return ["hangar", "modrinth", "spigot", "bukkit"]
+}
+
+/// The rows shown, in order.
+pub fn shown() -> [str] {
+    return ["hangar", "modrinth", "spigot", "github", "bukkit", "curseforge"]
+}
+
+/// The order a link is chosen in.
+fn preferred() -> [str] {
+    return ["hangar", "modrinth", "github", "spigot", "bukkit", "curseforge"]
+}
+
+fn slotOf(result: Result<Found?, str>) -> Slot {
+    return match result {
+        Ok(found) => Slot(found, null)
+        Err(why) => Slot(null, errors.message(why))
+    }
+}
+
+fn search(store: str, plugin: Plugin, context: Context) -> Result<Found?, str> {
+    return match store {
+        "hangar" => hangar.search(plugin, context)
+        "modrinth" => modrinth.search(plugin, context)
+        "spigot" => spigot.search(plugin, context)
+        _ => bukkit.search(plugin, context)
+    }
+}
+
+/// The store whose link to configure: an exact match first, then a confirmed one, in preferred order.
+pub fn choose(slots: Map<str, Slot>) -> str? {
+    for wanted in ["exact", "confirmed"] {
+        for name in preferred() {
+            if let slot = slots.get(name) {
+                if let found = slot.found {
+                    if !found.unusable && (if wanted == "exact" { found.exact } else { found.confirmed }) {
+                        return name
+                    }
+                }
+            }
+        }
+    }
+    return null
+}
+
+/// Whether the store's newest jar is the same plugin: same name and main class.
+fn confirm(plugin: Plugin, found: Found, context: Context, folder: str) -> Result<bool, str> {
+    let name = plugin.name ?? plugin.fileName
+    let target = stores.resolve(found.link) ?? return Ok(false)
+    let release = stores.latest(target, context with { name = name, asset = found.asset })?
+    let chosen = release ?? return Ok(false)
+    let url = chosen.url ?? return Ok(false)
+    let file = paths.join(folder, text.safeFileName("{name}-{target.store}") + ".jar")
+    net.download(url, file, chosen.headers, Map())?
+    let identity = descriptor.read(file)
+    let _ = fs.delete(file)
+    if let described = identity {
+        return Ok(text.key(described.name) == text.key(name) && described.main == plugin.main)
+    }
+    return Ok(false)
+}
+
+/// Confirms name-only matches, in preferred order, until one holds.
+fn settle(plugin: Plugin, slots: Map<str, Slot>, context: Context, folder: str) {
+    if choose(slots) != null {
+        return
+    }
+    for name in preferred() {
+        if name == "curseforge" {
+            continue
+        }
+        let slot = slots.get(name) ?? continue
+        let found = slot.found ?? continue
+        if found.unusable {
+            continue
+        }
+        match confirm(plugin, found, context, folder) {
+            Ok(same) => {
+                if same {
+                    slots[name] = Slot(found with { confirmed = true }, null)
+                    if name == "bukkit" {
+                        if let mirror = slots.get("curseforge") {
+                            if let twin = mirror.found {
+                                slots["curseforge"] = Slot(twin with { confirmed = true }, null)
+                            }
+                        }
+                    }
+                    return
+                }
+                slots[name] = Slot(found with { other = true, unusable = true }, null)
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+/// Looks every plugin up in every store.
+/// folder is scratch space for the jars downloaded to confirm a match; it is removed afterwards.
+pub fn run(plugins: [Plugin], context: Context, folder: str) -> [Entry] {
+    let total = plugins.len() * 6
+    var done = 0
+    let slotsByPlugin: [Map<str, Slot>] = []
+    for plugin in plugins {
+        let slots: Map<str, Slot> = Map()
+        let name = plugin.name ?? plugin.fileName
+        let scoped = context with { name = name }
+        for store in searched() {
+            slots[store] = slotOf(search(store, plugin, scoped))
+            done += 1
+            ui.progress("Searching", done, total)
+        }
+        let hints: [str] = []
+        if let website = plugin.website {
+            hints.push(website)
+        }
+        for store in searched() {
+            if let slot = slots.get(store) {
+                if let found = slot.found {
+                    for hint in found.hints {
+                        hints.push(hint)
+                    }
+                }
+            }
+        }
+        slots["github"] = slotOf(github.search(plugin, scoped, hints))
+        done += 1
+        ui.progress("Searching", done, total)
+        if let bukkitSlot = slots.get("bukkit") {
+            if let hit = bukkitSlot.found {
+                slots["curseforge"] = Slot(curseforge.fromBukkit(hit), null)
+            } else {
+                slots["curseforge"] = Slot(null, bukkitSlot.error)
+            }
+        }
+        slotsByPlugin.push(slots)
+    }
+
+    let _ = fs.delete(folder)
+    let _ = fs.createDirectories(folder)
+    let list: [Entry] = []
+    for index, plugin in plugins {
+        settle(plugin, slotsByPlugin[index], context with { name = plugin.name ?? plugin.fileName }, folder)
+        done += 1
+        ui.progress("Searching", done, total)
+        let chosen = choose(slotsByPlugin[index])
+        var found: Found? = null
+        if let store = chosen {
+            if let slot = slotsByPlugin[index].get(store) {
+                found = slot.found
+            }
+        }
+        list.push(Entry(plugin, slotsByPlugin[index], chosen, found))
+    }
+    let _ = fs.delete(folder)
+    if let scratch = paths.parent(folder) {
+        if fs.list(scratch).unwrapOr(["x"]).len() == 0 {
+            let _ = fs.delete(scratch)
+        }
+    }
+    return list
+}

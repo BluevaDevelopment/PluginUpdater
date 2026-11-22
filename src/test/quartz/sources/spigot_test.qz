@@ -1,0 +1,27 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.sources.spigot_test
+
+import net.blueva.pluginupdater.sources.spigot
+
+@test
+fn spigotKnowsItsLinks() {
+    let named = spigot.parse("https://www.spigotmc.org/resources/vault.34315/updates").unwrap()
+    assert(named.get("id") == "34315", "id after the name")
+    let bare = spigot.parse("https://spigotmc.org/resources/34315/").unwrap()
+    assert(bare.get("id") == "34315", "bare id")
+    assert(spigot.link(bare) == "https://www.spigotmc.org/resources/34315/", "link back")
+    assert(spigot.parse("https://www.spigotmc.org/resources/vault/") == null, "no id")
+}
+
+@test
+fn titlesLoseTheirTags() {
+    assert(spigot.title("Name [1.8 - 1.21]") == "Name ", "brackets")
+    assert(spigot.title("Name | Short pitch") == "Name ", "pitch")
+    assert(spigot.title("Name (Free): more") == "Name ", "parentheses and colon")
+}

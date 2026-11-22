@@ -1,0 +1,51 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Puts planned jars in place. A replaced jar is moved into the run's backup folder, outside the plugins folder so
+// the server never loads it.
+package net.blueva.pluginupdater.update.apply
+
+import net.blueva.pluginupdater.core.errors
+import net.blueva.pluginupdater.core.paths
+import net.blueva.pluginupdater.update.plan.Outcome
+import org.quartzlang.embed.fs
+
+/// Installs one planned jar; backups is the run's backup folder, or null to keep none.
+pub fn install(folder: str, outcome: Outcome, backups: str?) -> Result<(), str> {
+    let fileName = outcome.fileName ?? return Err("{outcome.name} has no file to install")
+    let staged = outcome.staged ?? return Err("{outcome.name} was not downloaded")
+    let target = paths.join(folder, fileName)
+    let old = outcome.plugin
+    if fs.exists(target) {
+        var same = false
+        if let previous = old {
+            same = previous.path == target
+        }
+        if !same {
+            return Err("{fileName} is already in {folder} and holds another plugin")
+        }
+    }
+    if let previous = old {
+        if let kept = backups {
+            fs.createDirectories(kept)?
+            fs.move(previous.path, paths.join(kept, previous.fileName))?
+        } else {
+            fs.delete(previous.path)?
+        }
+    }
+    fs.move(staged, target)?
+    return Ok(())
+}
+
+/// Keeps the newest keep run folders under folder. Their names are timestamps, so they sort by age.
+pub fn prune(folder: str, keep: int) {
+    let runs = errors.orNull(fs.list(folder)) ?? []
+    let extra = runs.len() - keep
+    for index in 0..extra {
+        let _ = fs.delete(paths.join(folder, runs[index]))
+    }
+}

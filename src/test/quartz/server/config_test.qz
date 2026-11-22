@@ -1,0 +1,62 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.server.config_test
+
+import net.blueva.pluginupdater.server.config
+import net.blueva.pluginupdater.server.writer
+import net.blueva.pluginupdater.support.check
+
+fn parse(source: str) -> Result<config.Config, str> {
+    return config.parse("/srv/mc/pluginupdater.toml", source)
+}
+
+@test
+fn linksAndTablesBecomeEntries() {
+    let loaded = parse("[settings]\nchannel = \"beta\"\nbackups = 0\n\n[plugins]\nVault = \"https://www.spigotmc.org/resources/vault.34315/\"\n\n[plugins.\"My Plugin\"]\nurl = \"https://github.com/owner/repo\"\nasset = \"MyPlugin-*.jar\"\nchannel = \"release\"\nenabled = false\n").unwrap()
+    check.equal("/srv/mc/plugins", loaded.pluginsFolder, "plugins folder")
+    check.equal("/srv/mc/changelog.md", loaded.changelog, "changelog")
+    check.equal(0, loaded.backups, "backups")
+    check.equal("My Plugin", loaded.plugins[0].name, "first")
+    check.equal("Vault", loaded.plugins[1].name, "second")
+    let mine = loaded.plugins[0]
+    let vault = loaded.plugins[1]
+    check.equal("github", mine.reference.store, "mine store")
+    check.equal("MyPlugin-*.jar", mine.asset ?? "", "mine asset")
+    check.equal("release", mine.channel, "mine channel")
+    check.equal(false, mine.enabled, "mine enabled")
+    check.equal("spigot", vault.reference.store, "vault store")
+    check.equal("beta", vault.channel, "vault channel")
+    check.equal(true, vault.enabled, "vault enabled")
+}
+
+@test
+fn mistakesNameTheFileAndTheKey() {
+    check.fails("pluginupdater.toml: unknown setting 'plugin-folder'", parse("[settings]\nplugin-folder = \"x\""))
+    check.fails("settings.channel can't be 'stable'", parse("[settings]\nchannel = \"stable\""))
+    check.fails("plugins.X needs a url", parse("[plugins.X]\nasset = \"a\""))
+    check.fails("no store understands 'LuckPerms'", parse("[plugins]\nX = \"LuckPerms\""))
+    check.fails("pluginupdater.toml", parse("plugins = "))
+}
+
+@test
+fn theWrittenFilesAreValidConfigurations() {
+    let template = parse(writer.Template).unwrap()
+    check.equal("paper", template.platform, "platform")
+    check.equal("release", template.channel, "channel")
+    check.equal(5, template.backups, "backups")
+    check.equal(0, template.plugins.len(), "plugins")
+
+    let text = writer.add(null, [
+        writer.entry("LuckPerms", [("url", "https://hangar.papermc.io/LuckPerms/LuckPerms")]),
+        writer.entry("Odd \"Name\"", [("url", "https://github.com/o/r"), ("asset", "Odd-*.jar")]),
+    ]).unwrap()
+    let loaded = parse(text).unwrap()
+    check.equal("LuckPerms", loaded.plugins[0].name, "first")
+    check.equal("Odd \"Name\"", loaded.plugins[1].name, "second")
+    check.equal("Odd-*.jar", loaded.plugins[1].asset ?? "", "asset")
+}

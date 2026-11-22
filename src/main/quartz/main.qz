@@ -1,0 +1,116 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// The entry point: reads the command line, runs a command, and turns any failure into a message and an exit code.
+package net.blueva.pluginupdater
+
+import host
+import net.blueva.pluginupdater.cli.command.{Command, Values}
+import net.blueva.pluginupdater.cli.commands.check
+import net.blueva.pluginupdater.cli.commands.detect
+import net.blueva.pluginupdater.cli.commands.init
+import net.blueva.pluginupdater.cli.commands.sources
+import net.blueva.pluginupdater.cli.commands.update
+import net.blueva.pluginupdater.cli.help
+import net.blueva.pluginupdater.cli.parser
+import net.blueva.pluginupdater.core.errors
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.server.config
+import org.quartzlang.embed.fs
+import org.quartzlang.embed.process
+
+const ExitOk = 0
+const ExitFailed = 1
+const ExitUsage = 2
+
+fn declarations() -> [Command] {
+    return [update.declaration(), check.declaration(), detect.declaration(), init.declaration(), sources.declaration()]
+}
+
+fn execute(name: str, out: ui.Ui, values: Values) -> Result<int, str> {
+    return match name {
+        "update" => update.execute(out, values)
+        "check" => check.execute(out, values)
+        "detect" => detect.execute(out, values)
+        "init" => init.execute(out, values)
+        _ => sources.execute(out, values)
+    }
+}
+
+fn isGlobal(option: str) -> bool {
+    return option == "-V" || option == "--version" || option == "-h" || option == "--help" || option == "-v" || option == "--verbose"
+}
+
+fn run(args: [str]) -> Result<int, str> {
+    var rest = args.slice(0, args.len())
+    var verbose = false
+
+    // Options before the command belong to pluginupdater itself; --verbose is also accepted after it.
+    while rest.len() > 0 && isGlobal(rest[0]) {
+        let option = rest[0]
+        rest = rest.slice(1, rest.len())
+        if option == "-V" || option == "--version" {
+            ui.say("pluginupdater version {host.version()}")
+            return Ok(ExitOk)
+        } else if option == "-h" || option == "--help" {
+            ui.say(help.root(declarations()))
+            return Ok(ExitOk)
+        }
+        verbose = true
+    }
+    rest = rest.filter((arg) => arg != "-v" && arg != "--verbose")
+    if args.len() > rest.len() {
+        verbose = verbose || args.any((arg) => arg == "-v" || arg == "--verbose")
+    }
+    let out = ui.create(verbose)
+
+    // With no command, a server folder with a configuration is updated; anywhere else, help is shown.
+    var name = "update"
+    if rest.len() == 0 || rest[0].startsWith("-") {
+        if rest.len() == 0 && !fs.isFile(config.File) {
+            ui.say(help.root(declarations()))
+            ui.say("\nThere is no {config.File} here. Run 'pluginupdater init' or 'pluginupdater detect --write' to start.")
+            return Ok(ExitUsage)
+        }
+    } else {
+        name = rest[0]
+        rest = rest.slice(1, rest.len())
+    }
+
+    for command in declarations() {
+        if command.name == name {
+            match parser.parse(command, rest) {
+                Ok(values) => {
+                    if values.help {
+                        ui.say(help.forCommand(command))
+                        return Ok(ExitOk)
+                    }
+                    return execute(name, out, values)
+                }
+                Err(why) => {
+                    if errors.isUsage(why) {
+                        ui.say(help.usage(command) + "\n")
+                        ui.error(out, errors.message(why))
+                        return Ok(ExitUsage)
+                    }
+                    return Err(why)
+                }
+            }
+        }
+    }
+    return Err(errors.usage("no such command '{name}'. See 'pluginupdater --help'."))
+}
+
+fn main() -> int {
+    return match run(process.args()) {
+        Ok(code) => code
+        Err(why) => {
+            ui.error(ui.create(false), errors.message(why))
+            if errors.isUsage(why) { ExitUsage } else { ExitFailed }
+        }
+    }
+}

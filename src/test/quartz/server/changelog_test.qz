@@ -1,0 +1,23 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.server.changelog_test
+
+import net.blueva.pluginupdater.server.changelog.{Change, prepend}
+import net.blueva.pluginupdater.support.check
+
+@test
+fn eachRunAddsASectionOnTop() {
+    let first = prepend(null, "2026-09-24 10:00", [Change("LuckPerms", "5.4.137", "5.5.71"), Change("Vault", null, "1.7.3")])
+    check.equal("# Changelog\n\n## 2026-09-24 10:00\n\n- LuckPerms 5.4.137 -> 5.5.71\n- Vault (new) -> 1.7.3\n", first, "first run")
+    let second = prepend(first, "2026-09-25 10:00", [Change("Vault", "1.7.3", "1.7.4")])
+    check.equal(
+        "# Changelog\n\n## 2026-09-25 10:00\n\n- Vault 1.7.3 -> 1.7.4\n\n## 2026-09-24 10:00\n\n- LuckPerms 5.4.137 -> 5.5.71\n- Vault (new) -> 1.7.3\n",
+        second,
+        "second run"
+    )
+}

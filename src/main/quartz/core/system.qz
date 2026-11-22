@@ -1,0 +1,32 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// The machine PluginUpdater runs on.
+package net.blueva.pluginupdater.core.system
+
+import host.cwd
+import host.date
+import org.quartzlang.embed.process
+
+/// An environment variable, or null when it is unset or blank.
+pub fn env(name: str) -> str? {
+    let value = process.env(name) ?? return null
+    if value == "" {
+        return null
+    }
+    return value
+}
+
+/// The working directory.
+pub fn workingDirectory() -> str {
+    return cwd()
+}
+
+/// The local date and time in a DateTimeFormatter pattern, such as 'yyyy-MM-dd HH:mm'.
+pub fn now(pattern: str) -> str {
+    return date(pattern)
+}

@@ -1,0 +1,114 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// The stores plugins are downloaded from. Each is a package under sources/ with the same functions:
+//
+//   Name, Label, Example        what it is called and a link it understands
+//   parse(url)                  the store's reference from a link, or null
+//   link(ref)                   the link back from a reference
+//   latest(ref, context)        the newest build, or null when none fits
+//   search(plugin, context)     optional, for detect
+//
+// Packages cannot call each other in a circle, so this one knows them all and the stores know none of it.
+package net.blueva.pluginupdater.core.stores
+
+import net.blueva.pluginupdater.core.model.{Context, Ref, Release}
+import net.blueva.pluginupdater.sources.bukkit
+import net.blueva.pluginupdater.sources.curseforge
+import net.blueva.pluginupdater.sources.direct
+import net.blueva.pluginupdater.sources.github
+import net.blueva.pluginupdater.sources.hangar
+import net.blueva.pluginupdater.sources.modrinth
+import net.blueva.pluginupdater.sources.spigot
+
+/// What `pluginupdater sources` shows for one store.
+pub struct Info {
+    name: str
+    label: str
+    example: str
+}
+
+/// The stores in the order a link is tried: direct takes any URL, so it is last.
+pub fn all() -> [Info] {
+    return [
+        Info(hangar.Name, hangar.Label, hangar.Example),
+        Info(modrinth.Name, modrinth.Label, modrinth.Example),
+        Info(spigot.Name, spigot.Label, spigot.Example),
+        Info(github.Name, github.Label, github.Example),
+        Info(bukkit.Name, bukkit.Label, bukkit.Example),
+        Info(curseforge.Name, curseforge.Label, curseforge.Example),
+        Info(direct.Name, direct.Label, direct.Example),
+    ]
+}
+
+/// The store and reference a link points to, or null.
+pub fn resolve(url: str) -> Ref? {
+    if let target = hangar.parse(url) {
+        return target
+    }
+    if let target = modrinth.parse(url) {
+        return target
+    }
+    if let target = spigot.parse(url) {
+        return target
+    }
+    if let target = github.parse(url) {
+        return target
+    }
+    if let target = bukkit.parse(url) {
+        return target
+    }
+    if let target = curseforge.parse(url) {
+        return target
+    }
+    return direct.parse(url)
+}
+
+/// The link a reference stands for.
+pub fn link(target: Ref) -> str {
+    return match target.store {
+        "hangar" => hangar.link(target)
+        "modrinth" => modrinth.link(target)
+        "spigot" => spigot.link(target)
+        "github" => github.link(target)
+        "bukkit" => bukkit.link(target)
+        "curseforge" => curseforge.link(target)
+        _ => direct.link(target)
+    }
+}
+
+fn ask(target: Ref, context: Context) -> Result<Release?, str> {
+    return match target.store {
+        "hangar" => hangar.latest(target, context)
+        "modrinth" => modrinth.latest(target, context)
+        "spigot" => spigot.latest(target, context)
+        "github" => github.latest(target, context)
+        "bukkit" => bukkit.latest(target, context)
+        "curseforge" => curseforge.latest(target, context)
+        _ => direct.latest(target, context)
+    }
+}
+
+/// The newest build a store offers. A SpigotMC resource hosted elsewhere is followed to the store its link belongs
+/// to, or to a jar.
+pub fn latest(target: Ref, context: Context) -> Result<Release?, str> {
+    let release = ask(target, context)?
+    if let found = release {
+        if let url = found.external {
+            if let other = resolve(url) {
+                if other.store != "direct" && other.store != "spigot" {
+                    return ask(other, context)
+                }
+            }
+            if url.lower().endsWith(".jar") {
+                return Ok(Release(url = url))
+            }
+            return Err("{context.name} is hosted outside SpigotMC ({url}); use that page as its link instead")
+        }
+    }
+    return Ok(release)
+}

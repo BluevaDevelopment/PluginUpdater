@@ -1,0 +1,54 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// What previous runs installed, so a store is not downloaded from again when its latest build is the one already
+// in place.
+package net.blueva.pluginupdater.server.memory
+
+import net.blueva.pluginupdater.core.errors
+import org.quartzlang.data.*
+import org.quartzlang.embed.fs
+
+/// The store build a plugin's jar came from (when the store names builds) and that jar's sha1.
+pub struct Remembered {
+    release: str?
+    sha1: str
+}
+
+/// The state kept in a file; missing or unreadable is an empty state.
+pub fn load(path: str) -> Map<str, Remembered> {
+    let plugins: Map<str, Remembered> = Map()
+    let source = errors.orNull(fs.readText(path)) ?? return plugins
+    let document = errors.orNull(parseJson(source)) ?? return plugins
+    let table = document.get("plugins") ?? return plugins
+    match table {
+        Value.Table(entries) => {
+            for name, entry in entries {
+                if let sha1 = entry.get("sha1")?.asStr() {
+                    plugins[name] = Remembered(entry.get("release")?.asStr(), sha1)
+                }
+            }
+        }
+        _ => {}
+    }
+    return plugins
+}
+
+pub fn save(path: str, plugins: Map<str, Remembered>) -> Result<int, str> {
+    let entries: Map<str, Value> = Map()
+    for name, remembered in plugins {
+        let fields: Map<str, Value> = Map()
+        if let release = remembered.release {
+            fields["release"] = Value.Str(release)
+        }
+        fields["sha1"] = Value.Str(remembered.sha1)
+        entries[name] = Value.Table(fields)
+    }
+    let root: Map<str, Value> = Map()
+    root["plugins"] = Value.Table(entries)
+    return fs.writeText(path, toJson(Value.Table(root)) + "\n")
+}

@@ -1,0 +1,143 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Modrinth.
+package net.blueva.pluginupdater.sources.modrinth
+
+import net.blueva.pluginupdater.core.model.*
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.versions
+import net.blueva.pluginupdater.server.installed
+import org.quartzlang.data.*
+import org.quartzlang.regex.*
+
+pub const Name = "modrinth"
+pub const Label = "Modrinth"
+pub const Example = "https://modrinth.com/plugin/<project>"
+
+const Api = "https://api.modrinth.com/v2"
+
+/// The loaders whose builds run on each platform.
+fn loaders(platform: str) -> [str] {
+    return match platform {
+        "velocity" => ["velocity"]
+        "waterfall" => ["waterfall", "bungeecord"]
+        _ => ["paper", "spigot", "bukkit", "purpur", "folia"]
+    }
+}
+
+pub fn parse(url: str) -> Ref? {
+    let found = compileRegex(r"^https?://modrinth\.com/[A-Za-z]+/([^/?#]+)").unwrap().find(url) ?? return null
+    let fields: Map<str, str> = Map()
+    fields["project"] = found.group(1) ?? ""
+    return Ref(Name, fields)
+}
+
+pub fn link(project: Ref) -> str {
+    return "https://modrinth.com/plugin/{project.get("project")}"
+}
+
+fn array(values: [str]) -> str {
+    return "[\"" + values.join("\",\"") + "\"]"
+}
+
+fn items(value: Value?) -> [Value] {
+    let out: [Value] = []
+    if let v = value {
+        for index in 0..v.len() {
+            if let item = v.item(index) {
+                out.push(item)
+            }
+        }
+    }
+    return out
+}
+
+/// The file of a build: its primary one, or its first jar.
+fn fileOf(version: Value) -> Value? {
+    let files = items(version.get("files"))
+    for candidate in files {
+        if candidate.get("primary")?.asBool() == true {
+            return candidate
+        }
+    }
+    for candidate in files {
+        if (candidate.get("filename")?.asStr() ?? "").lower().endsWith(".jar") {
+            return candidate
+        }
+    }
+    return null
+}
+
+pub fn latest(project: Ref, ctx: Context) -> Result<Release?, str> {
+    var url = "{Api}/project/{text.encode(project.get("project"))}/version?loaders={text.encode(array(loaders(ctx.platform)))}"
+    if let minecraft = ctx.minecraft {
+        url = url + "&game_versions={text.encode(array([minecraft]))}"
+    }
+    let found = net.jsonOrNull(url)?
+    let all = found ?? return Err("Modrinth has no project {project.get("project")}")
+    let list = items(all)
+    list.sortBy((v) => v.get("date_published")?.asStr() ?? "")
+    list.reverse()
+    let wanted = versions.channelRank(ctx.channel) ?? 0
+    for version in list {
+        let chosen = fileOf(version) ?? continue
+        let rank = versions.channelRank(version.get("version_type")?.asStr() ?? "") ?? 0
+        if rank < wanted {
+            continue
+        }
+        let hashes: Map<str, str> = Map()
+        if let sha1 = chosen.get("hashes")?.get("sha1")?.asStr() {
+            hashes["sha1"] = sha1
+        }
+        if let sha512 = chosen.get("hashes")?.get("sha512")?.asStr() {
+            hashes["sha512"] = sha512
+        }
+        return Ok(Release(
+            id = version.get("id")?.asStr(),
+            version = version.get("version_number")?.asStr(),
+            url = chosen.get("url")?.asStr(),
+            fileName = chosen.get("filename")?.asStr(),
+            hashes = hashes,
+        ))
+    }
+    return Ok(null)
+}
+
+/// By the jar's sha1 first, which names the exact project; then by name among the platform's plugins.
+pub fn search(plugin: Plugin, ctx: Context) -> Result<Found?, str> {
+    let name = plugin.name ?? return Ok(null)
+    let exact = net.jsonOrNull("{Api}/version_file/{installed.digest(plugin, "sha1")}?algorithm=sha1")?
+    var id: str? = exact?.get("project_id")?.asStr()
+    if id == null {
+        let categories = loaders(ctx.platform).map((l) => "categories:{l}")
+        let facets = "[" + array(categories) + "]"
+        let found = net.jsonOrNull("{Api}/search?limit=10&query={text.encode(name)}&facets={text.encode(facets)}")?
+        let key = text.key(name)
+        for hit in items(found?.get("hits")) {
+            if text.key(hit.get("title")?.asStr() ?? "") == key || text.key(hit.get("slug")?.asStr() ?? "") == key {
+                id = hit.get("project_id")?.asStr()
+                break
+            }
+        }
+    }
+    let projectId = id ?? return Ok(null)
+    let project = net.json("{Api}/project/{projectId}")?
+    let fields: Map<str, str> = Map()
+    fields["project"] = project.get("slug")?.asStr() ?? projectId
+    let hints: [str] = []
+    if let source = project.get("source_url")?.asStr() {
+        hints.push(source)
+    }
+    return Ok(Found(
+        link(Ref(Name, fields)),
+        project.get("title")?.asStr() ?? projectId,
+        exact != null,
+        hints,
+    ))
+}

@@ -1,0 +1,45 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Failures meant for the user. Every fallible function returns Result<T, str>; a usage error (how the command
+// line was written) is a message carrying a marker, so the exit code can tell it from other failures.
+package net.blueva.pluginupdater.core.errors
+
+const UsageMarker = "usage\u{1f}"
+
+/// A message for a mistake in how the command line was written.
+pub fn usage(message: str) -> str {
+    return UsageMarker + message
+}
+
+pub fn isUsage(text: str) -> bool {
+    return text.startsWith(UsageMarker)
+}
+
+/// The text to show the user, without the usage marker.
+pub fn message(text: str) -> str {
+    if text.startsWith(UsageMarker) {
+        return text.slice(UsageMarker.len(), text.len())
+    }
+    return text
+}
+
+/// Puts context in front of a failure, such as the file being read.
+pub fn context<T>(prefix: str, result: Result<T, str>) -> Result<T, str> {
+    return match result {
+        Ok(value) => Ok(value)
+        Err(why) => Err("{prefix}: {why}")
+    }
+}
+
+/// The value of a result, or null for a failure.
+pub fn orNull<T>(result: Result<T, str>) -> T? {
+    return match result {
+        Ok(value) => value
+        Err(_) => null
+    }
+}

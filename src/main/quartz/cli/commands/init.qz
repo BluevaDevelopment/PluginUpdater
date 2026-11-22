@@ -1,0 +1,36 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// pluginupdater init: write a starting configuration.
+package net.blueva.pluginupdater.cli.commands.init
+
+import net.blueva.pluginupdater.cli.command.{Command, Opt, Values}
+import net.blueva.pluginupdater.cli.common
+import net.blueva.pluginupdater.core.paths
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.server.config
+import net.blueva.pluginupdater.server.writer
+import org.quartzlang.embed.fs
+
+pub fn declaration() -> Command {
+    return Command(
+        "init",
+        "Write a commented configuration file to start from",
+        [common.configOption(), Opt("force", short = "f", flag = true, help = "Replace the file when it already exists")],
+    )
+}
+
+pub fn execute(out: ui.Ui, values: Values) -> Result<int, str> {
+    let path = values.text("config") ?? config.File
+    if fs.exists(path) && !values.flag("force") {
+        return Err("{path} already exists; add --force to replace it")
+    }
+    fs.writeText(path, writer.Template)?
+    ui.success(out, "Wrote {paths.absolute(path)}")
+    ui.info("Add plugins under [plugins], or run 'pluginupdater detect --write' to add the ones installed.")
+    return Ok(0)
+}

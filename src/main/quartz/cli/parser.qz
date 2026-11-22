@@ -1,0 +1,114 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Reads a command line against a command's declaration. Values come back keyed by the option's long name and the
+// argument's name; a mistake is a usage error.
+package net.blueva.pluginupdater.cli.parser
+
+import net.blueva.pluginupdater.cli.command.{Command, Opt, Values}
+import net.blueva.pluginupdater.core.errors
+
+fn find(options: [Opt], long: str?, short: str?) -> Opt? {
+    for option in options {
+        if let name = long {
+            if option.long == name {
+                return option
+            }
+        }
+        if let letter = short {
+            if option.short == letter {
+                return option
+            }
+        }
+    }
+    return null
+}
+
+fn accept(values: Values, option: Opt, raw: str) {
+    if option.multiple {
+        let list = values.lists.get(option.long) ?? []
+        list.push(raw)
+        values.lists[option.long] = list
+    } else {
+        values.texts[option.long] = raw
+    }
+}
+
+/// The values, or help = true when -h or --help was given.
+pub fn parse(command: Command, args: [str]) -> Result<Values, str> {
+    for arg in args {
+        if arg == "--" {
+            break
+        }
+        if arg == "-h" || arg == "--help" {
+            return Ok(Values(help = true))
+        }
+    }
+    let values = Values()
+    let positional: [str] = []
+    var index = 0
+    var literal = false
+    while index < args.len() {
+        let arg = args[index]
+        if literal || arg == "-" || !arg.startsWith("-") {
+            positional.push(arg)
+        } else if arg == "--" {
+            literal = true
+        } else {
+            var long: str? = null
+            var short: str? = null
+            var inline: str? = null
+            if arg.startsWith("--") {
+                let body = arg.slice(2, arg.len())
+                if let equals = body.find("=") {
+                    long = body.slice(0, equals)
+                    inline = body.slice(equals + 1, body.len())
+                } else {
+                    long = body
+                }
+            } else if arg.len() == 2 {
+                short = arg.slice(1, 2)
+            }
+            let option = find(command.options, long, short) ?? return Err(errors.usage("no such option: {arg}"))
+            if option.flag {
+                if inline != null {
+                    return Err(errors.usage("--{option.long} does not take a value"))
+                }
+                values.flags[option.long] = true
+            } else if let given = inline {
+                accept(values, option, given)
+            } else {
+                index += 1
+                if index >= args.len() {
+                    return Err(errors.usage("{arg} needs a value"))
+                }
+                accept(values, option, args[index])
+            }
+        }
+        index += 1
+    }
+
+    for position, argument in command.arguments {
+        if position < positional.len() {
+            values.texts[argument.name] = positional[position]
+        } else if !argument.optional {
+            return Err(errors.usage("missing argument <{argument.name}>"))
+        }
+    }
+    if positional.len() > command.arguments.len() {
+        return Err(errors.usage("unexpected argument: {positional[command.arguments.len()]}"))
+    }
+
+    for option in command.options {
+        if !option.flag && !option.multiple && !values.texts.has(option.long) {
+            if let fallback = option.default {
+                values.texts[option.long] = fallback
+            }
+        }
+    }
+    return Ok(values)
+}

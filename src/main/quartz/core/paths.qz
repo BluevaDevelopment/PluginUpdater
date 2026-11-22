@@ -1,0 +1,80 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Paths as text, with '/' as the separator: the fs kit takes no other.
+package net.blueva.pluginupdater.core.paths
+
+import net.blueva.pluginupdater.core.system
+import org.quartzlang.regex.*
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+pub fn isAbsolute(path: str) -> bool {
+    return path.startsWith("/") || pattern(r"^[A-Za-z]:[\\/]").isMatch(path)
+}
+
+/// base and child joined; an absolute child stands alone.
+pub fn join(base: str, child: str) -> str {
+    if isAbsolute(child) {
+        return child
+    }
+    if base.endsWith("/") {
+        return base + child
+    }
+    return base + "/" + child
+}
+
+/// The path without '.' and '..' segments.
+pub fn normalize(path: str) -> str {
+    let parts: [str] = []
+    for part in path.split("/") {
+        if part == "" || part == "." {
+            continue
+        }
+        if part == ".." {
+            if parts.len() > 0 {
+                parts.pop()
+            }
+            continue
+        }
+        parts.push(part)
+    }
+    let joined = parts.join("/")
+    return if path.startsWith("/") { "/" + joined } else { joined }
+}
+
+/// The path from the filesystem root, relative paths starting at the working directory.
+pub fn absolute(path: str) -> str {
+    return normalize(join(system.workingDirectory(), path))
+}
+
+/// The folder holding a path, or null at the top.
+pub fn parent(path: str) -> str? {
+    let trimmed = if path.endsWith("/") && path.len() > 1 { path.slice(0, path.len() - 1) } else { path }
+    var last = -1
+    for index, c in trimmed {
+        if c == '/' {
+            last = index
+        }
+    }
+    if last < 0 {
+        return null
+    }
+    if last == 0 {
+        return "/"
+    }
+    return trimmed.slice(0, last)
+}
+
+/// The last segment of a path.
+pub fn name(path: str) -> str {
+    let trimmed = if path.endsWith("/") && path.len() > 1 { path.slice(0, path.len() - 1) } else { path }
+    let parts = trimmed.split("/")
+    return parts[parts.len() - 1]
+}

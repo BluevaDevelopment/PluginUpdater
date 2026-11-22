@@ -1,0 +1,86 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Everything PluginUpdater prints. The status line is redrawn in place on a terminal; elsewhere it is left out,
+// so logs stay readable.
+package net.blueva.pluginupdater.core.ui
+
+import net.blueva.pluginupdater.core.system
+import net.blueva.pluginupdater.core.text
+import org.quartzlang.embed.terminal.{eprintln, interactive, print, println, width}
+
+/// How output looks: more detail with --verbose, colors on a terminal.
+pub struct Ui {
+    verbose: bool
+    color: bool
+}
+
+pub fn create(verbose: bool) -> Ui {
+    return Ui(verbose, interactive() && system.env("NO_COLOR") == null)
+}
+
+pub fn style(ui: Ui, value: str, code: str) -> str {
+    if ui.color {
+        return "\u{1b}[{code}m{value}\u{1b}[0m"
+    }
+    return value
+}
+
+pub fn say(value: str) {
+    println(value)
+}
+
+/// A stage of the run.
+pub fn step(ui: Ui, value: str) {
+    println(style(ui, "==> ", "34") + style(ui, value, "1"))
+}
+
+pub fn info(value: str) {
+    println("    " + value)
+}
+
+/// Only with --verbose.
+pub fn detail(ui: Ui, value: str) {
+    if ui.verbose {
+        println(style(ui, "    " + value, "2"))
+    }
+}
+
+pub fn warn(ui: Ui, value: str) {
+    println(style(ui, "    warning: ", "33") + value)
+}
+
+pub fn success(ui: Ui, value: str) {
+    println(style(ui, "==> ", "32") + style(ui, value, "1"))
+}
+
+pub fn error(ui: Ui, value: str) {
+    eprintln(style(ui, "error: ", "31") + value)
+}
+
+/// Pads text to width, counting what is printed rather than escape codes.
+pub fn pad(value: str, columns: int) -> str {
+    return text.pad(value, columns)
+}
+
+/// Draws 'label 3/10' over the current line; nothing when the output is not a terminal.
+pub fn progress(label: str, done: int, total: int) {
+    if !interactive() {
+        return
+    }
+    let columns = width() - 1
+    let line = "    {label} {done}/{total}"
+    let fitted = if line.len() > columns { line.slice(0, columns) } else { line }
+    print("\r" + fitted + " ".repeat(columns - fitted.len()))
+}
+
+/// Erases the progress line.
+pub fn clear() {
+    if interactive() {
+        print("\r" + " ".repeat(width() - 1) + "\r")
+    }
+}

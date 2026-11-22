@@ -1,0 +1,39 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.core.versions_test
+
+import net.blueva.pluginupdater.core.versions
+
+@test
+fn numbersCompareOneByOne() {
+    assert(versions.compare("5.4.137", "5.4.145") == -1, "5.4.137 < 5.4.145")
+    assert(versions.compare("2.10.0", "2.9.9") == 1, "2.10.0 > 2.9.9")
+    assert(versions.compare("1.0", "1.0.0") == 0, "1.0 = 1.0.0")
+    assert(versions.compare("v2.22.0", "2.22.0") == 0, "v prefix")
+}
+
+@test
+fn aReleaseIsNewerThanItsPreReleases() {
+    assert(versions.compare("2.20.1-SNAPSHOT", "2.20.1") == -1, "snapshot")
+    assert(versions.compare("7.4.6-beta-01", "7.4.6") == -1, "beta")
+    assert(versions.compare("1.0.0-beta.2", "1.0.0-beta.10") == -1, "beta builds")
+    assert(versions.compare("1.0.0-alpha", "1.0.0-rc1") == -1, "alpha < rc")
+}
+
+@test
+fn storeSuffixesAndBuildTagsDoNotMakeAVersionOlder() {
+    assert(versions.compare("v5.5.71-bukkit", "5.5.71") == 0, "bukkit suffix")
+    assert(versions.compare("2.20.1-b456", "2.20.1") == 0, "build tag")
+}
+
+@test
+fn textWithoutNumbersCannotBeCompared() {
+    assert(versions.compare("latest", "1.0") == null, "no number")
+    assert(versions.find("worldedit-bukkit-7.4.6-beta-01") == "7.4.6-beta-01", "find beta")
+    assert(versions.find("WorldEdit 7.4.6 Beta 1 (Bukkit for 1.21.4-26.3)") == "7.4.6", "find in title")
+}

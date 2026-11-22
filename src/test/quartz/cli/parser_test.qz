@@ -1,0 +1,36 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.cli.parser_test
+
+import net.blueva.pluginupdater.cli.command.{Command, Opt}
+import net.blueva.pluginupdater.cli.parser
+import net.blueva.pluginupdater.support.check
+
+fn declared() -> Command {
+    return Command("update", "", [
+        Opt("config", short = "c", value = "file", default = "pluginupdater.toml"),
+        Opt("only", short = "o", multiple = true),
+        Opt("write", short = "w", flag = true),
+    ])
+}
+
+@test
+fn optionsAndDefaults() {
+    let values = parser.parse(declared(), ["-o", "Vault", "--only=LuckPerms", "-w"]).unwrap()
+    check.equal(["Vault", "LuckPerms"], values.list("only"), "only")
+    check.equal("pluginupdater.toml", values.text("config") ?? "", "config")
+    check.equal(true, values.flag("write"), "write")
+}
+
+@test
+fn mistakesAreUsageErrors() {
+    check.fails("no such option: --nope", parser.parse(declared(), ["--nope"]))
+    check.fails("--config needs a value", parser.parse(declared(), ["--config"]))
+    check.fails("unexpected argument: extra", parser.parse(declared(), ["extra"]))
+    check.equal(true, parser.parse(declared(), ["--nope", "-h"]).unwrap().help, "help wins")
+}

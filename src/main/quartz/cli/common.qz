@@ -1,0 +1,32 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Options more than one command takes.
+package net.blueva.pluginupdater.cli.common
+
+import net.blueva.pluginupdater.cli.command.Opt
+import net.blueva.pluginupdater.server.config
+
+pub fn configOption() -> Opt {
+    return Opt(
+        "config",
+        short = "c",
+        value = "file",
+        default = config.File,
+        help = "The configuration file, in the server folder. Defaults to {config.File}"
+    )
+}
+
+pub fn onlyOption() -> Opt {
+    return Opt(
+        "only",
+        short = "o",
+        value = "plugin",
+        multiple = true,
+        help = "Only this plugin, by its name in the configuration. Repeatable"
+    )
+}

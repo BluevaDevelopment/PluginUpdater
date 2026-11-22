@@ -1,0 +1,188 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Decides what one configured plugin needs: nothing, an update, a first install, or nothing because the store only
+// offers something older. The new jar is downloaded into the staging folder when it has to be looked at.
+package net.blueva.pluginupdater.update.plan
+
+import net.blueva.pluginupdater.core.model.{Plugin, Release}
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.paths
+import net.blueva.pluginupdater.core.stores
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.core.versions
+import net.blueva.pluginupdater.server.config
+import net.blueva.pluginupdater.server.descriptor
+import net.blueva.pluginupdater.server.installed
+import net.blueva.pluginupdater.server.memory.Remembered
+import org.quartzlang.embed.fs
+import org.quartzlang.regex.*
+
+/// One entry's outcome. action is 'current', 'update', 'install', 'skip' or 'failed'.
+pub struct Outcome {
+    name: str
+    action: str
+    version: str? = null
+    from: str? = null
+    to: str? = null
+    store: str? = null
+    staged: str? = null
+    fileName: str? = null
+    plugin: Plugin? = null
+    remember: Remembered? = null
+    message: str? = null
+}
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+fn endsWithJar(name: str) -> bool {
+    return pattern(r"\.jar\s*$").isMatch(name.lower())
+}
+
+/// The file name a download announces in Content-Disposition, if any.
+fn disposition(header: str?) -> str? {
+    let value = header ?? return null
+    var name: str? = null
+    for source in [r#"filename\*?=\s*"([^"]+)""#, r"filename\*?=\s*[A-Za-z0-9\-]*''([^;]+)", r"filename\*?=\s*([^;]+)"] {
+        if name == null {
+            if let found = pattern(source).find(value) {
+                name = found.group(1)
+            }
+        }
+    }
+    let chosen = name ?? return null
+    if endsWithJar(chosen) {
+        return chosen.trim()
+    }
+    return null
+}
+
+/// Puts the release's jar at target and returns the file name it came with, if it had one.
+fn fetch(release: Release, target: str) -> Result<str?, str> {
+    if let path = release.path {
+        fs.copy(path, target)?
+        return Ok(release.fileName)
+    }
+    let url = release.url ?? return Err("the store gave no file to download")
+    let fetched = net.download(url, target, release.headers, release.hashes)?
+    if release.fileName != null || release.unnamed {
+        return Ok(release.fileName)
+    }
+    let name = disposition(fetched.disposition) ?? text.fileName(fetched.url) ?? return Ok(null)
+    if endsWithJar(name) {
+        return Ok(name)
+    }
+    return Ok(null)
+}
+
+fn current(name: str, plugin: Plugin, release: Release, remember: bool) -> Outcome {
+    var kept: Remembered? = null
+    if remember {
+        if let id = release.id {
+            kept = Remembered(id, installed.digest(plugin, "sha1"))
+        }
+    }
+    return Outcome(name, "current", version = plugin.version, remember = kept)
+}
+
+/// Whether a store's own version name agrees with the one inside its jar. When it does not, the store may be serving
+/// a stale file, so the build is not remembered and the next run looks again.
+fn agrees(release: Release, version: str) -> bool {
+    if let named = release.version {
+        return versions.compare(named, version) == 0
+    }
+    return true
+}
+
+fn versionOf(plugin: Plugin?) -> str? {
+    if let have = plugin {
+        return have.version
+    }
+    return null
+}
+
+/// One entry's outcome; failures are errors.
+pub fn entry(out: ui.Ui, loaded: config.Config, plugins: [Plugin], remembered: Map<str, Remembered>, planned: config.Entry, staging: str, index: int) -> Result<Outcome, str> {
+    let plugin = installed.find(plugins, planned.name, planned.file)?
+    let found = stores.latest(planned.reference, config.context(loaded, planned))?
+    let release = found ?? return Ok(Outcome(
+        planned.name, "skip", version = versionOf(plugin),
+        message = "no {planned.channel} build for {loaded.platform}"
+    ))
+
+    if let have = plugin {
+        if let last = remembered.get(planned.name) {
+            if let id = release.id {
+                if last.release == id && last.sha1 == installed.digest(have, "sha1") {
+                    ui.detail(out, "{planned.name}: the store still offers the build installed last time")
+                    return Ok(current(planned.name, have, release, false))
+                }
+            }
+        }
+        for algorithm, hex in release.hashes {
+            if installed.digest(have, algorithm) == hex.lower() {
+                return Ok(current(planned.name, have, release, true))
+            }
+        }
+    }
+
+    let staged = paths.join(staging, "{index}-{text.safeFileName(planned.name)}.jar")
+    let source = release.url ?? release.path ?? ""
+    ui.detail(out, "{planned.name}: fetching {source}")
+    let announced = fetch(release, staged)?
+    let identity = descriptor.read(staged) ?? return Err("the file from {source} is not a plugin jar")
+    var expected = planned.name
+    if let have = plugin {
+        if let installedName = have.name {
+            expected = installedName
+        }
+    }
+    if text.key(identity.name) != text.key(expected) {
+        let hint = if planned.reference.store == "github" { " or set asset" } else { "" }
+        return Err("the download is the plugin '{identity.name}', not '{expected}'; check its link{hint}")
+    }
+    let version = identity.version ?? release.version ?? "?"
+    let fileName = announced ?? text.safeFileName("{identity.name}-{version}") + ".jar"
+    let sha1 = installed.digest(Plugin(staged, fileName, null, null, null, null), "sha1")
+
+    if let have = plugin {
+        if sha1 == installed.digest(have, "sha1") || version == (have.version ?? "") {
+            fs.delete(staged)?
+            return Ok(current(planned.name, have, release, agrees(release, version)))
+        }
+        if let order = versions.compare(version, have.version ?? "") {
+            if order < 0 && !planned.allowDowngrade {
+                fs.delete(staged)?
+                return Ok(Outcome(
+                    planned.name, "skip", version = have.version,
+                    message = "the newest build, {version}, is older than the installed {have.version ?? "?"}"
+                ))
+            }
+        }
+    }
+
+    var kept = Remembered(null, sha1)
+    if let id = release.id {
+        if agrees(release, version) {
+            kept = Remembered(id, sha1)
+        }
+    }
+    return Ok(Outcome(
+        planned.name,
+        if plugin != null { "update" } else { "install" },
+        from = versionOf(plugin),
+        to = version,
+        store = planned.reference.store,
+        staged = staged,
+        fileName = fileName,
+        plugin = plugin,
+        remember = kept
+    ))
+}

@@ -1,0 +1,137 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Requests and downloads. Requests go through the http kit with a few attempts; downloads stream to disk.
+package net.blueva.pluginupdater.core.net
+
+import host
+import host.sleep
+import host.version
+import org.quartzlang.data.*
+import org.quartzlang.http.*
+
+const Attempts = 3
+const Pause = 1000
+
+/// An answer: the status, the body as text, and the headers.
+pub struct Reply {
+    status: int
+    text: str
+    headers: [(str, str)]
+}
+
+/// The first header of a reply with this name, ignoring case.
+pub fn header(reply: Reply, name: str) -> str? {
+    for pair in reply.headers {
+        if pair.0.equalsIgnoreCase(name) {
+            return pair.1
+        }
+    }
+    return null
+}
+
+fn retried(status: int) -> bool {
+    return status == 429 || status == 502 || status == 503 || status == 504
+}
+
+/// Sends a request, trying again when the connection fails or the server is briefly unavailable.
+pub fn request(method: str, url: str, headers: [(str, str)], body: str?) -> Result<Reply, str> {
+    // Some stores refuse generic agents: name the tool, its version and where to reach it.
+    let all: [(str, str)] = [("User-Agent", "pluginupdater/{version()} (https://github.com/BluevaDevelopment/PluginUpdater)")]
+    all.insertAll(1, headers)
+    var failure = ""
+    for attempt in 1..=Attempts {
+        let sent = Request(url, method, all, body?.toBytes(), 60000)
+        match send(sent) {
+            Ok(response) => {
+                if !retried(response.status) || attempt == Attempts {
+                    return Ok(Reply(response.status, response.text() ?? "", response.headers))
+                }
+            }
+            Err(why) => {
+                failure = why
+            }
+        }
+        sleep(Pause * attempt)
+    }
+    return Err("Could not reach {url}: {failure}")
+}
+
+fn success(reply: Reply, url: str) -> Result<Reply, str> {
+    if reply.status < 200 || reply.status > 299 {
+        return Err("{url} answered HTTP {reply.status}")
+    }
+    return Ok(reply)
+}
+
+/// The parsed JSON of a GET, or null when it answers 404.
+pub fn jsonOrNull(url: str, headers: [(str, str)] = []) -> Result<Value?, str> {
+    let reply = request("GET", url, headers, null)?
+    if reply.status == 404 {
+        return Ok(null)
+    }
+    let ok = success(reply, url)?
+    return match parseJson(ok.text) {
+        Ok(value) => Ok(value)
+        Err(why) => Err("Could not read {url}: {why}")
+    }
+}
+
+pub fn json(url: str, headers: [(str, str)] = []) -> Result<Value, str> {
+    let found = jsonOrNull(url, headers)?
+    if let value = found {
+        return Ok(value)
+    }
+    return Err("{url} was not found (404)")
+}
+
+/// POSTs a value as JSON and returns the parsed answer.
+pub fn postJson(url: str, body: Value, headers: [(str, str)] = []) -> Result<Value, str> {
+    let all: [(str, str)] = [("Content-Type", "application/json")]
+    all.insertAll(1, headers)
+    let reply = success(request("POST", url, all, toJson(body))?, url)?
+    return match parseJson(reply.text) {
+        Ok(value) => Ok(value)
+        Err(why) => Err("Could not read {url}: {why}")
+    }
+}
+
+/// Where a download came from, and the file name it announced.
+pub struct Fetched {
+    url: str
+    disposition: str?
+}
+
+/// Downloads url into target. hashes maps sha512, sha256, sha1 or md5 to a hex digest the file must match.
+pub fn download(url: str, target: str, headers: [(str, str)], hashes: Map<str, str>) -> Result<Fetched, str> {
+    var algorithm: str? = null
+    var hex: str? = null
+    for name in ["sha512", "sha256", "sha1", "md5"] {
+        if algorithm == null {
+            if let value = hashes.get(name) {
+                algorithm = name
+                hex = value
+            }
+        }
+    }
+    let sent: Map<str, str> = Map()
+    for pair in headers {
+        sent[pair.0] = pair.1
+    }
+    sent["User-Agent"] = "pluginupdater/{version()} (https://github.com/BluevaDevelopment/PluginUpdater)"
+    let answer = host.download(url, target, sent, algorithm, hex)
+    if let failure = answer.failure {
+        return Err("Could not download {url}: {failure}")
+    }
+    if answer.status == 404 {
+        return Err("{url} was not found (404)")
+    }
+    if answer.status < 200 || answer.status > 299 {
+        return Err("Could not download {url}: HTTP {answer.status}")
+    }
+    return Ok(Fetched(answer.url ?? url, answer.disposition))
+}

@@ -1,0 +1,84 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Any other link to a jar, or a jar on disk. Without a store to ask, the file is downloaded and its plugin.yml read,
+// unless the server says it has not changed since the last run.
+package net.blueva.pluginupdater.sources.direct
+
+import host
+import net.blueva.pluginupdater.core.model.*
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.text
+import org.quartzlang.embed.fs
+import org.quartzlang.regex.*
+
+pub const Name = "direct"
+pub const Label = "Direct link"
+pub const Example = "https://example.com/Plugin.jar, or a path such as /opt/jars/Plugin.jar"
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+fn fieldsOf(key: str, value: str) -> Map<str, str> {
+    let fields: Map<str, str> = Map()
+    fields[key] = value
+    return fields
+}
+
+pub fn parse(url: str) -> Ref? {
+    if url.startsWith("http://") || url.startsWith("https://") {
+        return Ref(Name, fieldsOf("url", url))
+    }
+    if url.startsWith("file://") {
+        return Ref(Name, fieldsOf("path", url.slice(7, url.len())))
+    }
+    if url.startsWith("/") || pattern(r"^\.\.?/").isMatch(url) || pattern(r"^[A-Za-z]:[\\/]").isMatch(url) {
+        return Ref(Name, fieldsOf("path", url))
+    }
+    return null
+}
+
+pub fn link(project: Ref) -> str {
+    return project.fields.get("url") ?? project.get("path")
+}
+
+/// The last segment of a path.
+fn baseName(path: str) -> str {
+    let parts = pattern(r"[\\/]").split(path)
+    return parts[parts.len() - 1]
+}
+
+pub fn latest(project: Ref, ctx: Context) -> Result<Release?, str> {
+    if let given = project.fields.get("path") {
+        let path = if given.startsWith(".") && ctx.root != "" { "{ctx.root}/{given}" } else { given }
+        if !fs.isFile(path) {
+            return Err("there is no file at {path}")
+        }
+        let sha1 = host.digest(path, "sha1")
+        let hashes: Map<str, str> = Map()
+        hashes["sha1"] = sha1
+        return Ok(Release(id = "sha1:{sha1}", path = path, fileName = baseName(path), hashes = hashes))
+    }
+
+    let url = project.get("url")
+    let head = net.request("HEAD", url, [], null)?
+    var id: str? = null
+    if head.status >= 200 && head.status <= 299 {
+        let tag = net.header(head, "ETag") ?? net.header(head, "Last-Modified")
+        if let value = tag {
+            id = "{value}|{net.header(head, "Content-Length") ?? ""}"
+        }
+    }
+    var fileName: str? = null
+    if let name = text.fileName(url) {
+        if name.lower().endsWith(".jar") {
+            fileName = name
+        }
+    }
+    return Ok(Release(id = id, url = url, fileName = fileName))
+}

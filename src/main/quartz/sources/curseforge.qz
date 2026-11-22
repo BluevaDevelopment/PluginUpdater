@@ -1,0 +1,112 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// CurseForge's Bukkit plugins. With an API key the CurseForge API is used; without one, the same catalog is read
+// through dev.bukkit.org's public API.
+package net.blueva.pluginupdater.sources.curseforge
+
+import net.blueva.pluginupdater.core.errors
+import net.blueva.pluginupdater.core.model.*
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.versions
+import net.blueva.pluginupdater.sources.bukkit
+import org.quartzlang.data.*
+import org.quartzlang.regex.*
+
+pub const Name = "curseforge"
+pub const Label = "CurseForge"
+pub const Example = "https://www.curseforge.com/minecraft/bukkit-plugins/<project>"
+
+const Api = "https://api.curseforge.com/v1"
+const Minecraft = 432
+const BukkitPlugins = 5
+
+fn fieldsOf(slug: str) -> Map<str, str> {
+    let fields: Map<str, str> = Map()
+    fields["slug"] = slug
+    return fields
+}
+
+pub fn parse(url: str) -> Ref? {
+    let found = compileRegex(r"^https?://[A-Za-z0-9.]*curseforge\.com/minecraft/bukkit-plugins/([^/?#]+)").unwrap().find(url) ?? return null
+    return Ref(Name, fieldsOf(found.group(1) ?? ""))
+}
+
+pub fn link(project: Ref) -> str {
+    return "https://www.curseforge.com/minecraft/bukkit-plugins/{project.get("slug")}"
+}
+
+fn rankOf(releaseType: int) -> int {
+    return match releaseType {
+        2 => -2
+        3 => -3
+        _ => 0
+    }
+}
+
+fn hashName(algo: int) -> str? {
+    return match algo {
+        1 => "sha1"
+        2 => "md5"
+        _ => null
+    }
+}
+
+/// CurseForge's own address for a file, for authors who turned off downloads through the API.
+fn cdn(id: int, fileName: str) -> str {
+    return "https://edge.forgecdn.net/files/{id / 1000}/{id % 1000}/{text.encode(fileName)}"
+}
+
+pub fn latest(project: Ref, ctx: Context) -> Result<Release?, str> {
+    let key = ctx.curseforge ?? return bukkit.latest(project, ctx)
+    let headers: [(str, str)] = [("x-api-key", key), ("Accept", "application/json")]
+    let slug = project.get("slug")
+    let found = errors.context("CurseForge", net.json("{Api}/mods/search?gameId={Minecraft}&classId={BukkitPlugins}&slug={text.encode(slug)}", headers))?
+    let mod = found.get("data")?.item(0) ?? return Err("CurseForge has no Bukkit plugin {slug}")
+    let modId = mod.get("id")?.asInt() ?? 0
+    let listing = errors.context("CurseForge", net.json("{Api}/mods/{modId}/files?pageSize=50", headers))?
+    let files = listing.get("data") ?? return Ok(null)
+
+    let wanted = versions.channelRank(ctx.channel) ?? 0
+    var newest: Value? = null
+    var newestDate = ""
+    for index in 0..files.len() {
+        let file = files.item(index) ?? continue
+        let date = file.get("fileDate")?.asStr() ?? ""
+        let available = file.get("isAvailable")?.asBool() ?? true
+        if available && rankOf(file.get("releaseType")?.asInt() ?? 1) >= wanted && (newest == null || date > newestDate) {
+            newest = file
+            newestDate = date
+        }
+    }
+    let chosen = newest ?? return Ok(null)
+    let hashes: Map<str, str> = Map()
+    if let list = chosen.get("hashes") {
+        for index in 0..list.len() {
+            let hash = list.item(index) ?? continue
+            if let name = hashName(hash.get("algo")?.asInt() ?? 0) {
+                hashes[name] = hash.get("value")?.asStr() ?? ""
+            }
+        }
+    }
+    let fileName = chosen.get("fileName")?.asStr() ?? ""
+    let id = chosen.get("id")?.asInt() ?? 0
+    return Ok(Release(
+        id = "{id}",
+        version = versions.find(chosen.get("displayName")?.asStr() ?? ""),
+        url = chosen.get("downloadUrl")?.asStr() ?? cdn(id, fileName),
+        fileName = fileName,
+        hashes = hashes,
+    ))
+}
+
+/// CurseForge's Bukkit plugins are dev.bukkit.org's projects, so what detect finds there is found here as well.
+pub fn fromBukkit(hit: Found) -> Found {
+    let slug = hit.slug ?? ""
+    return Found(link(Ref(Name, fieldsOf(slug))), hit.title, exact = hit.exact, slug = hit.slug)
+}

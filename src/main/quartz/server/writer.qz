@@ -1,0 +1,95 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Writing pluginupdater.toml: the starting file, and entries added to it.
+package net.blueva.pluginupdater.server.writer
+
+import org.quartzlang.data.*
+import org.quartzlang.regex.*
+
+pub const Template = """# PluginUpdater keeps the jars in the plugins folder up to date.
+#
+# Each entry under [plugins] is named after its plugin (the name in its
+# plugin.yml) and links to where the plugin is published. Run
+# 'pluginupdater sources' to see the links it understands.
+
+[settings]
+# The folder with the plugin jars, relative to this file.
+plugins-folder = "plugins"
+# Each run that changes something adds a '- Plugin old -> new' line per plugin here.
+changelog = "changelog.md"
+# Which builds to pick: paper (also Spigot, Bukkit, Folia and Purpur), velocity or waterfall.
+platform = "paper"
+# The least stable builds accepted: release, beta or alpha.
+channel = "release"
+# Only builds made for this Minecraft version, where the store says (Hangar, Modrinth).
+# minecraft = "1.21.8"
+# How many runs of replaced jars to keep in .pluginupdater/backups; 0 keeps none.
+backups = 5
+# Install a build even when its version looks older than the installed one.
+allow-downgrade = false
+
+[tokens]
+# Optional. GitHub answers 60 requests an hour without one. GITHUB_TOKEN works too.
+# github = ""
+# Optional. The CurseForge API needs a key (or CURSEFORGE_API_KEY); without one,
+# CurseForge links are read through dev.bukkit.org's public API.
+# curseforge = ""
+
+[plugins]
+# LuckPerms = "https://hangar.papermc.io/LuckPerms/LuckPerms"
+# Vault = "https://www.spigotmc.org/resources/vault.34315/"
+#
+# [plugins.EssentialsX]
+# url = "https://github.com/EssentialsX/Essentials"
+# asset = "EssentialsX-*.jar"   # which file of the release, when it has several
+"""
+
+/// A TOML basic string.
+pub fn string(value: str) -> str {
+    var out = "\""
+    for c in value.chars() {
+        let code = c.code()
+        if c == '\\' {
+            out += "\\\\"
+        } else if c == '"' {
+            out += "\\\""
+        } else if code < 32 || code == 127 {
+            out += "\\u{code:04X}"
+        } else {
+            out += "{c}"
+        }
+    }
+    return out + "\""
+}
+
+/// A table key: bare when it can be, quoted otherwise.
+pub fn key(name: str) -> str {
+    if compileRegex(r"^[A-Za-z0-9_\-]+$").unwrap().isMatch(name) {
+        return name
+    }
+    return string(name)
+}
+
+/// A [plugins.<name>] table; fields are key and string value pairs.
+pub fn entry(name: str, fields: [(str, str)]) -> str {
+    let lines = ["[plugins.{key(name)}]"]
+    for field in fields {
+        lines.push("{field.0} = {string(field.1)}")
+    }
+    return lines.join("\n")
+}
+
+/// The file's text with entries added at the end, checked to still be valid TOML.
+pub fn add(existing: str?, entries: [str]) -> Result<str, str> {
+    let base = compileRegex(r"\s+$").unwrap().replace(existing ?? Template, "")
+    let result = base + "\n\n" + entries.join("\n\n") + "\n"
+    return match parseToml(result) {
+        Ok(_) => Ok(result)
+        Err(why) => Err("the configuration would not be valid: {why}")
+    }
+}

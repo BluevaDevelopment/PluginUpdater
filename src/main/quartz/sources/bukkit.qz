@@ -1,0 +1,162 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// dev.bukkit.org, which is CurseForge's Bukkit plugin catalog, through its public ServerMods API (no key needed).
+package net.blueva.pluginupdater.sources.bukkit
+
+import net.blueva.pluginupdater.core.model.*
+import net.blueva.pluginupdater.core.net
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.versions
+import net.blueva.pluginupdater.server.installed
+import org.quartzlang.data.*
+import org.quartzlang.regex.*
+
+pub const Name = "bukkit"
+pub const Label = "BukkitDev"
+pub const Example = "https://dev.bukkit.org/projects/<project>"
+
+const Api = "https://servermods.forgesvc.net/servermods"
+
+/// A project of the catalog.
+pub struct Project {
+    id: int
+    name: str
+    slug: str
+}
+
+/// A file of a project.
+pub struct File {
+    name: str
+    fileName: str
+    fileUrl: str?
+    downloadUrl: str
+    md5: str?
+    releaseType: str
+}
+
+fn pattern(source: str) -> Regex {
+    return compileRegex(source).unwrap()
+}
+
+fn fieldsOf(slug: str) -> Map<str, str> {
+    let fields: Map<str, str> = Map()
+    fields["slug"] = slug
+    return fields
+}
+
+pub fn parse(url: str) -> Ref? {
+    if let found = pattern(r"^https?://dev\.bukkit\.org/projects/([^/?#]+)").find(url) {
+        return Ref(Name, fieldsOf(found.group(1) ?? ""))
+    }
+    if let found = pattern(r"^https?://dev\.bukkit\.org/bukkit-plugins/([^/?#]+)").find(url) {
+        return Ref(Name, fieldsOf(found.group(1) ?? ""))
+    }
+    return null
+}
+
+pub fn link(project: Ref) -> str {
+    return "https://dev.bukkit.org/projects/{project.get("slug")}"
+}
+
+fn projects(query: str) -> Result<[Project], str> {
+    let out: [Project] = []
+    // The search only matches lower case.
+    let list = net.jsonOrNull("{Api}/projects?search={text.encode(query.lower())}")? ?? return Ok(out)
+    for index in 0..list.len() {
+        let item = list.item(index) ?? continue
+        let slug = item.get("slug")?.asStr() ?? continue
+        out.push(Project(item.get("id")?.asInt() ?? 0, item.get("name")?.asStr() ?? slug, slug))
+    }
+    return Ok(out)
+}
+
+/// The project id behind a slug.
+pub fn project(slug: str) -> Result<int, str> {
+    for candidate in projects(slug)? {
+        if candidate.slug == slug {
+            return Ok(candidate.id)
+        }
+    }
+    return Err("dev.bukkit.org has no project {slug}")
+}
+
+/// A project's files, oldest first.
+pub fn files(id: int) -> Result<[File], str> {
+    let out: [File] = []
+    let list = net.json("{Api}/files?projectIds={id}")?
+    for index in 0..list.len() {
+        let item = list.item(index) ?? continue
+        let download = item.get("downloadUrl")?.asStr() ?? continue
+        out.push(File(
+            item.get("name")?.asStr() ?? "",
+            item.get("fileName")?.asStr() ?? "",
+            item.get("fileUrl")?.asStr(),
+            download,
+            item.get("md5")?.asStr(),
+            item.get("releaseType")?.asStr() ?? "release",
+        ))
+    }
+    return Ok(out)
+}
+
+fn rankOf(releaseType: str) -> int {
+    return versions.channelRank(releaseType) ?? 0
+}
+
+/// The newest file at least as stable as the channel.
+pub fn pick(list: [File], channel: str) -> Release? {
+    let wanted = versions.channelRank(channel) ?? 0
+    var index = list.len() - 1
+    while index >= 0 {
+        let file = list[index]
+        if rankOf(file.releaseType) >= wanted {
+            let hashes: Map<str, str> = Map()
+            if let md5 = file.md5 {
+                hashes["md5"] = md5
+            }
+            return Release(
+                id = file.fileUrl ?? file.downloadUrl,
+                version = versions.find(file.name),
+                url = file.downloadUrl,
+                fileName = file.fileName,
+                hashes = hashes,
+            )
+        }
+        index -= 1
+    }
+    return null
+}
+
+pub fn latest(target: Ref, ctx: Context) -> Result<Release?, str> {
+    let id = project(target.get("slug"))?
+    return Ok(pick(files(id)?, ctx.channel))
+}
+
+/// Titles here often end in ' for Bukkit'.
+fn title(name: str) -> str {
+    return pattern(r"forbukkit$").replace(text.key(name), "")
+}
+
+pub fn search(plugin: Plugin, _ctx: Context) -> Result<Found?, str> {
+    let name = plugin.name ?? return Ok(null)
+    let key = text.key(name)
+    for candidate in projects(name)? {
+        if title(candidate.name) == key || text.key(candidate.slug) == key {
+            let md5 = installed.digest(plugin, "md5")
+            var exact = false
+            for file in files(candidate.id)? {
+                if file.md5 == md5 {
+                    exact = true
+                }
+            }
+            let slug = candidate.slug
+            return Ok(Found(link(Ref(Name, fieldsOf(slug))), candidate.name, exact = exact, slug = slug))
+        }
+    }
+    return Ok(null)
+}

@@ -1,15 +1,14 @@
 <h1 align="center">PluginUpdater</h1>
 
 <p align="center">
-  <strong>Keeps the plugins of a Minecraft server up to date, from every store they are published on. Written in Lua, running on the JVM.</strong>
+  <strong>Keeps the plugins of a Minecraft server up to date, from every store they are published on. Written in Quartz, running on the JVM.</strong>
 </p>
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-26.1-blue">
-  <img alt="Lua" src="https://img.shields.io/badge/Lua-5.5.1-000080?logo=lua&logoColor=white">
-  <img alt="Mawu" src="https://img.shields.io/badge/Mawu-26.3-000080">
-  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.4.20-7F52FF?logo=kotlin&logoColor=white">
-  <img alt="Java" src="https://img.shields.io/badge/Java-21+-ED8B00?logo=openjdk&logoColor=white">
+  <img alt="Quartz" src="https://img.shields.io/badge/Quartz-0.2-F9A8D4">
+  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.4.21-7F52FF?logo=kotlin&logoColor=white">
+  <img alt="Java" src="https://img.shields.io/badge/Java-25+-ED8B00?logo=openjdk&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
@@ -31,9 +30,10 @@ the old jars as a backup, and adds what changed to `changelog.md`:
 It does nothing on its own: each plugin is listed in `pluginupdater.toml` with
 a link to its page. `pluginupdater detect` finds those links for you.
 
-PluginUpdater is also a showcase for [Mawu](https://github.com/BluevaDevelopment/Mawu):
-the tool itself is written in Lua, with Kotlin only as a thin host (see
-[Written in Lua](#written-in-lua)).
+PluginUpdater is also a showcase for [Quartz](https://github.com/QuartzProject/Quartz)
+and its [Embed](https://github.com/QuartzProject/Embed) Gradle plugin: the tool
+itself is written in Quartz, with Kotlin only as a thin host (see
+[Written in Quartz](#written-in-quartz)).
 
 ## Stores
 
@@ -62,7 +62,7 @@ Notes:
 
 Download `pluginupdater-26.1.jar` from the
 [latest release](https://github.com/BluevaDevelopment/PluginUpdater/releases/latest)
-into the server folder (the one with `plugins/`). It needs Java 21 or newer.
+into the server folder (the one with `plugins/`). It needs Java 25 or newer.
 
 ```text
 java -jar pluginupdater-26.1.jar detect --write   # find your plugins and write pluginupdater.toml
@@ -174,30 +174,28 @@ hash), and its `plugin.yml` is read:
 - Otherwise the old jar moves to `.pluginupdater/backups/<date>/`, outside
   the plugins folder, and the new one takes its place.
 
-Every plugin is checked at once, so a run over dozens of plugins takes seconds.
 What was installed is kept in `.pluginupdater/state.json`.
 
-## Written in Lua
+## Written in Quartz
 
-PluginUpdater is a Lua program. [Mawu](https://github.com/BluevaDevelopment/Mawu)
-compiles the scripts under `src/main/lua` into Lua bytecode at build time and
-packs them into the jar; at run time they execute on
-[Luak](https://github.com/BluevaDevelopment/Luak), a Lua 5.5 runtime for the
-JVM.
+PluginUpdater is a [Quartz](https://quartzlang.org) program. The
+[Embed](https://github.com/QuartzProject/Embed) Gradle plugin compiles the
+sources under `src/main/quartz` at build time, checks them against the host
+functions Kotlin offers, and packs the validated module into the jar; at run
+time it executes in the Quartz sandbox.
 
-- **Lua decides everything**: the command line, the configuration, each
+- **Quartz decides everything**: the command line, the configuration, each
   store's API, detection, version comparison, the update plan, backups and
-  the changelog. Requests run as coroutines, so every plugin is checked at
-  once from a single Lua state. The tests are Lua as well.
-- **Kotlin only provides primitives** (`src/main/kotlin/.../host`), installed
-  as globals: `http` (background requests and downloads), `fs`, `zip`,
-  `json`, `toml`, `term` and `host`. None of them knows about plugins or
-  stores.
+  the changelog. Files, the terminal, HTTP requests and the process come from
+  Embed's kits, granted by the host. The tests are Quartz as well.
+- **Kotlin only provides primitives** (`src/main/kotlin/.../host`): streaming
+  a download to disk with a checksum, file digests, the clock and the working
+  directory. None of them knows about plugins or stores.
 
 | Folder | Contents |
 |---|---|
 | `cli/` | Option parsing, help, and one file per command |
-| `core/` | Errors, console output, the coroutine scheduler, requests, version comparison, the store registry |
+| `core/` | Errors, console output, requests, paths, version comparison, the store registry |
 | `server/` | The configuration, plugin descriptors, the plugins folder, state and changelog |
 | `sources/` | One file per store |
 | `update/` | Planning and applying a run |
@@ -205,10 +203,17 @@ JVM.
 
 ## Building
 
+Nothing of Quartz is published yet, so the build takes it from checkouts: the
+[Embed](https://github.com/QuartzProject/Embed) repository (`../Embed` by
+default, or `-Pquartz.embed`), the JVM bindings of
+[Quartz](https://github.com/QuartzProject/Quartz) and a `libquartz` from a
+[Quartz release](https://github.com/QuartzProject/Quartz/releases). It needs a
+JDK 25.
+
 ```text
-./gradlew build            # compiles, runs the tests, and writes build/libs/pluginupdater-<version>.jar
-./gradlew test -Pnetwork   # also runs the tests that ask the real stores
-./gradlew run --args="check"   # runs against run/, a scratch server folder
+./gradlew build -Pquartz.jvm=<Quartz>/bindings/jvm -Pquartz.library=<libquartz>
+./gradlew test -Pnetwork ...   # also runs the tests that ask the real stores
+./gradlew run --args="check" ...   # runs against run/, a scratch server folder
 ```
 
 ## License

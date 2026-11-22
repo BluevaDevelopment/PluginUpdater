@@ -1,0 +1,58 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// What a command declares about itself, so the parser and the help text read the same description.
+package net.blueva.pluginupdater.cli.command
+
+/// An option: --long, an optional -s, and either a flag or a value (repeatable when multiple).
+pub struct Opt {
+    long: str
+    short: str? = null
+    value: str? = null
+    help: str = ""
+    flag: bool = false
+    multiple: bool = false
+    default: str? = null
+}
+
+/// A positional argument.
+pub struct Argument {
+    name: str
+    help: str = ""
+    optional: bool = false
+}
+
+pub struct Command {
+    name: str
+    summary: str
+    options: [Opt] = []
+    arguments: [Argument] = []
+}
+
+/// What the command line said, keyed by an option's long name or an argument's name.
+pub struct Values {
+    help: bool = false
+    texts: Map<str, str> = Map()
+    lists: Map<str, [str]> = Map()
+    flags: Map<str, bool> = Map()
+}
+
+impl Values {
+    /// The text of a value option or argument.
+    pub fn text(self, key: str) -> str? {
+        return self.texts.get(key)
+    }
+
+    /// The values of a repeatable option.
+    pub fn list(self, key: str) -> [str] {
+        return self.lists.get(key) ?? []
+    }
+
+    pub fn flag(self, key: str) -> bool {
+        return self.flags.get(key) ?? false
+    }
+}

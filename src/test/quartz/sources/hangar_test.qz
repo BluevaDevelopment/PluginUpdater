@@ -1,0 +1,21 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+package net.blueva.pluginupdater.sources.hangar_test
+
+import net.blueva.pluginupdater.sources.hangar
+
+@test
+fn hangarKnowsItsLinks() {
+    let found = hangar.parse("https://hangar.papermc.io/ViaVersion/ViaVersion/versions")
+    assert(found != null, "a hangar link")
+    let parsed = found.unwrap()
+    assert(parsed.store == "hangar", "store")
+    assert(parsed.get("owner") == "ViaVersion" && parsed.get("slug") == "ViaVersion", "fields")
+    assert(hangar.link(parsed) == "https://hangar.papermc.io/ViaVersion/ViaVersion", "link back")
+    assert(hangar.parse("https://modrinth.com/plugin/x") == null, "other store")
+}

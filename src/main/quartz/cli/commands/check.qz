@@ -1,0 +1,29 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// pluginupdater check: what update would do, without changing anything.
+package net.blueva.pluginupdater.cli.commands.check
+
+import net.blueva.pluginupdater.cli.command.{Command, Values}
+import net.blueva.pluginupdater.cli.common
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.server.config
+import net.blueva.pluginupdater.update.run
+
+pub fn declaration() -> Command {
+    return Command(
+        "check",
+        "Show which plugins have newer builds, without installing them",
+        [common.configOption(), common.onlyOption()],
+    )
+}
+
+pub fn execute(out: ui.Ui, values: Values) -> Result<int, str> {
+    let loaded = config.load(values.text("config") ?? config.File)?
+    let done = run.execute(out, loaded, false, values.list("only"))?
+    return Ok(run.summary(out, loaded, done, false))
+}

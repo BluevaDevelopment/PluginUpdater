@@ -1,0 +1,194 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// A whole run over the configured plugins: check them all, print what each needs, then (unless it is only a check)
+// install, write the changelog and remember what was installed.
+package net.blueva.pluginupdater.update.run
+
+import net.blueva.pluginupdater.core.errors
+import net.blueva.pluginupdater.core.paths
+import net.blueva.pluginupdater.core.system
+import net.blueva.pluginupdater.core.text
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.server.changelog
+import net.blueva.pluginupdater.server.config
+import net.blueva.pluginupdater.server.installed
+import net.blueva.pluginupdater.server.memory
+import net.blueva.pluginupdater.update.apply
+import net.blueva.pluginupdater.update.plan
+import org.quartzlang.embed.fs
+
+/// What a run decided for every plugin, and what it changed on disk.
+pub struct Executed {
+    outcomes: [plan.Outcome]
+    changes: [changelog.Change]
+}
+
+/// The entries to look at: enabled ones, or only the ones named.
+fn chosen(loaded: config.Config, only: [str]) -> Result<[config.Entry], str> {
+    let list: [config.Entry] = []
+    if only.len() == 0 {
+        for planned in loaded.plugins {
+            if planned.enabled {
+                list.push(planned)
+            }
+        }
+        return Ok(list)
+    }
+    for name in only {
+        let found = loaded.plugins.find((p) => p.name.lower() == name.lower())
+        if let planned = found {
+            list.push(planned)
+        } else {
+            return Err(errors.usage("there is no plugin '{name}' in {paths.name(loaded.path)}"))
+        }
+    }
+    return Ok(list)
+}
+
+fn row(width: int, name: str, detail: str, shown: ui.Ui, code: str) {
+    ui.info("{text.pad(name, width)}  {ui.style(shown, detail, code)}")
+}
+
+fn show(shown: ui.Ui, width: int, outcome: plan.Outcome) {
+    if outcome.action == "current" {
+        row(width, outcome.name, "{outcome.version ?? "?"}  up to date", shown, "2")
+    } else if outcome.action == "update" {
+        row(width, outcome.name, "{outcome.from ?? "?"} -> {outcome.to ?? "?"}  ({outcome.store ?? "?"})", shown, "32")
+    } else if outcome.action == "install" {
+        row(width, outcome.name, "not installed -> {outcome.to ?? "?"}  ({outcome.store ?? "?"})", shown, "32")
+    } else if outcome.action == "skip" {
+        row(width, outcome.name, "skipped: {outcome.message ?? ""}", shown, "33")
+    } else {
+        row(width, outcome.name, "failed: {outcome.message ?? ""}", shown, "31")
+    }
+}
+
+fn plural(count: int) -> str {
+    return if count == 1 { "" } else { "s" }
+}
+
+/// Checks every chosen plugin and, when install is true, applies what changed.
+pub fn execute(shown: ui.Ui, loaded: config.Config, install: bool, only: [str]) -> Result<Executed, str> {
+    if !fs.isDirectory(loaded.pluginsFolder) {
+        return Err("there is no plugins folder at {loaded.pluginsFolder}; set plugins-folder in {paths.name(loaded.path)}")
+    }
+    let entries = chosen(loaded, only)?
+    if entries.len() == 0 {
+        ui.say("No plugins to check. Add them under [plugins] in {paths.name(loaded.path)}, or run 'pluginupdater detect --write'.")
+        return Ok(Executed([], []))
+    }
+
+    let plugins = installed.scan(loaded.pluginsFolder)
+    let statePath = paths.join(loaded.data, "state.json")
+    let remembered = memory.load(statePath)
+    let staging = paths.join(loaded.data, "staging")
+    let _ = fs.delete(staging)
+    fs.createDirectories(staging)?
+
+    ui.step(shown, "Checking {entries.len()} plugin{plural(entries.len())} in {loaded.pluginsFolder}")
+    let outcomes: [plan.Outcome] = []
+    var width = 0
+    for index, planned in entries {
+        ui.progress("Checking", index, entries.len())
+        match plan.entry(shown, loaded, plugins, remembered, planned, staging, index + 1) {
+            Ok(outcome) => {
+                outcomes.push(outcome)
+            }
+            Err(why) => {
+                outcomes.push(plan.Outcome(planned.name, "failed", message = errors.message(why)))
+            }
+        }
+        if planned.name.len() > width {
+            width = planned.name.len()
+        }
+    }
+    ui.clear()
+
+    let changes: [changelog.Change] = []
+    var backups: str? = null
+    if loaded.backups > 0 {
+        backups = paths.join(paths.join(loaded.data, "backups"), system.now("yyyy-MM-dd_HH-mm-ss"))
+    }
+    for index, planned in outcomes {
+        var outcome = planned
+        if install && (outcome.action == "update" || outcome.action == "install") {
+            match apply.install(loaded.pluginsFolder, outcome, backups) {
+                Ok(_) => {
+                    changes.push(changelog.Change(outcome.name, outcome.from, outcome.to ?? "?"))
+                }
+                Err(why) => {
+                    outcome = outcome with { action = "failed", message = why }
+                }
+            }
+        }
+        if let kept = outcome.remember {
+            if install || outcome.action == "current" {
+                remembered[outcome.name] = kept
+            }
+        }
+        show(shown, width, outcome)
+        outcomes[index] = outcome
+    }
+
+    if changes.len() > 0 {
+        changelog.write(loaded.changelog, system.now("yyyy-MM-dd HH:mm"), changes)?
+        if let kept = backups {
+            if let folder = paths.parent(kept) {
+                apply.prune(folder, loaded.backups)
+            }
+        }
+    }
+    memory.save(statePath, remembered)?
+    let _ = fs.delete(staging)
+    return Ok(Executed(outcomes, changes))
+}
+
+fn count(outcomes: [plan.Outcome], action: str) -> int {
+    return outcomes.filter((o) => o.action == action).len()
+}
+
+/// Prints how the run went and returns its exit code: 1 when a plugin failed.
+pub fn summary(shown: ui.Ui, loaded: config.Config, done: Executed, install: bool) -> int {
+    let current = count(done.outcomes, "current")
+    let update = count(done.outcomes, "update")
+    let fresh = count(done.outcomes, "install")
+    let skipped = count(done.outcomes, "skip")
+    let failed = count(done.outcomes, "failed")
+    let parts: [str] = []
+    if update > 0 {
+        parts.push("{update} {if install { "updated" } else { "to update" }}")
+    }
+    if fresh > 0 {
+        parts.push("{fresh} {if install { "installed" } else { "to install" }}")
+    }
+    if current > 0 {
+        parts.push("{current} up to date")
+    }
+    if skipped > 0 {
+        parts.push("{skipped} skipped")
+    }
+    if failed > 0 {
+        parts.push("{failed} failed")
+    }
+    if parts.len() == 0 {
+        return 0
+    }
+    let line = text.capitalize(parts.join(", "))
+    if failed > 0 {
+        ui.error(shown, line)
+    } else {
+        ui.success(shown, line)
+    }
+    if install && done.changes.len() > 0 {
+        ui.info("Changes added to {loaded.changelog}")
+    }
+    if !install && update + fresh > 0 {
+        ui.info("Run 'pluginupdater update' to install them")
+    }
+    return if failed > 0 { 1 } else { 0 }
+}

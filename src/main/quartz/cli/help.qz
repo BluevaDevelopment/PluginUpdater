@@ -1,0 +1,78 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Help text for the root command and for each command.
+package net.blueva.pluginupdater.cli.help
+
+import net.blueva.pluginupdater.cli.command.Command
+import net.blueva.pluginupdater.core.text
+
+fn rows(list: [(str, str)]) -> str {
+    var width = 0
+    for row in list {
+        if row.0.len() > width {
+            width = row.0.len()
+        }
+    }
+    let lines: [str] = []
+    for row in list {
+        lines.push("  {text.pad(row.0, width)}  {row.1}")
+    }
+    return lines.join("\n")
+}
+
+pub fn usage(command: Command) -> str {
+    var out = "Usage: pluginupdater {command.name}"
+    if command.options.len() > 0 {
+        out += " [<options>]"
+    }
+    for argument in command.arguments {
+        out += if argument.optional { " [<{argument.name}>]" } else { " <{argument.name}>" }
+    }
+    return out
+}
+
+pub fn forCommand(command: Command) -> str {
+    let options: [(str, str)] = []
+    for option in command.options {
+        var names = "--{option.long}"
+        if let letter = option.short {
+            names = "-{letter}, {names}"
+        }
+        if !option.flag {
+            names += "=<{option.value ?? "value"}>"
+        }
+        options.push((names, option.help))
+    }
+    options.push(("-h, --help", "Show this message and exit"))
+
+    var out = "{usage(command)}\n\n  {command.summary}\n\nOptions:\n{rows(options)}"
+    let arguments: [(str, str)] = []
+    for argument in command.arguments {
+        arguments.push(("<{argument.name}>", argument.help))
+    }
+    if arguments.len() > 0 {
+        out += "\n\nArguments:\n{rows(arguments)}"
+    }
+    return out
+}
+
+pub fn root(commands: [Command]) -> str {
+    let list: [(str, str)] = []
+    for command in commands {
+        list.push((command.name, command.summary))
+    }
+    let options = rows([
+        ("-v, --verbose", "Print more about each step"),
+        ("-V, --version", "Show the version and exit"),
+        ("-h, --help", "Show this message and exit"),
+    ])
+    let intro = "Usage: pluginupdater [<options>] [<command>] [<args>]...\n\n" +
+        "  Keep the plugins of a Minecraft server up to date from Hangar, Modrinth, SpigotMC,\n" +
+        "  GitHub, BukkitDev, CurseForge or direct links. With no command, runs update.\n\n"
+    return "{intro}Options:\n{options}\n\nCommands:\n{rows(list)}"
+}
