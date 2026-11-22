@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-26.1-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-26.2-blue">
   <img alt="Quartz" src="https://img.shields.io/badge/Quartz-0.2-F9A8D4">
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.4.21-7F52FF?logo=kotlin&logoColor=white">
   <img alt="Java" src="https://img.shields.io/badge/Java-25+-ED8B00?logo=openjdk&logoColor=white">
@@ -60,14 +60,14 @@ Notes:
 
 ## Getting started
 
-Download `pluginupdater-26.1.jar` from the
+Download `pluginupdater-26.2.jar` from the
 [latest release](https://github.com/BluevaDevelopment/PluginUpdater/releases/latest)
 into the server folder (the one with `plugins/`). It needs Java 25 or newer.
 
 ```text
-java -jar pluginupdater-26.1.jar detect --write   # find your plugins and write pluginupdater.toml
-java -jar pluginupdater-26.1.jar check            # see what would be updated
-java -jar pluginupdater-26.1.jar                  # update
+java -jar pluginupdater-26.2.jar detect --write   # find your plugins and write pluginupdater.toml
+java -jar pluginupdater-26.2.jar check            # see what would be updated
+java -jar pluginupdater-26.2.jar                  # update
 ```
 
 Stop the server before updating, or restart it afterwards: a running server
