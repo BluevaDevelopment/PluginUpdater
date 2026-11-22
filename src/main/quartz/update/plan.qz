@@ -24,6 +24,7 @@ import org.quartzlang.embed.fs
 import org.quartzlang.regex.*
 
 /// One entry's outcome. action is 'current', 'update', 'install', 'skip' or 'failed'.
+@derive(Decode, Encode)
 pub struct Outcome {
     name: str
     action: str

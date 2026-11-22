@@ -174,6 +174,7 @@ hash), and its `plugin.yml` is read:
 - Otherwise the old jar moves to `.pluginupdater/backups/<date>/`, outside
   the plugins folder, and the new one takes its place.
 
+Plugins are checked several at a time (`parallel` in `[settings]`, 8 by default).
 What was installed is kept in `.pluginupdater/state.json`.
 
 ## Written in Quartz
@@ -189,8 +190,8 @@ time it executes in the Quartz sandbox.
   the changelog. Files, the terminal, HTTP requests and the process come from
   Embed's kits, granted by the host. The tests are Quartz as well.
 - **Kotlin only provides primitives** (`src/main/kotlin/.../host`): streaming
-  a download to disk with a checksum, file digests, the clock and the working
-  directory. None of them knows about plugins or stores.
+  a download to disk with a checksum, file digests, the clock, the working
+  directory and worker threads. None of them knows about plugins or stores.
 
 | Folder | Contents |
 |---|---|

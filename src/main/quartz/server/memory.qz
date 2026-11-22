@@ -14,6 +14,7 @@ import org.quartzlang.data.*
 import org.quartzlang.embed.fs
 
 /// The store build a plugin's jar came from (when the store names builds) and that jar's sha1.
+@derive(Decode, Encode)
 pub struct Remembered {
     release: str?
     sha1: str

@@ -1,0 +1,81 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Looking plugins up in the stores, several at once on workers: inputs and answers travel as JSON.
+package net.blueva.pluginupdater.detect.job
+
+import net.blueva.pluginupdater.core.model.{Context, Plugin}
+import net.blueva.pluginupdater.core.parallel
+import net.blueva.pluginupdater.core.paths
+import net.blueva.pluginupdater.detect.detect
+import org.quartzlang.data.*
+import org.quartzlang.embed.fs
+
+@derive(Decode, Encode)
+struct Input {
+    plugin: Plugin
+    context: Context
+    folder: str
+}
+
+@derive(Decode, Encode)
+struct Answer {
+    entry: detect.Entry?
+    error: str?
+}
+
+/// Worker entry point: the JSON of an Input in, the JSON of an Answer out.
+pub fn lookUpOne(text: str) -> str {
+    let answer = match decodeJson::<Input>(text) {
+        Ok(input) => Answer(detect.lookUp(input.plugin, input.context, input.folder), null)
+        Err(why) => Answer(null, "{why}")
+    }
+    return encodeJson(answer)
+}
+
+fn decoded(reply: Result<str, str>, plugin: Plugin) -> detect.Entry {
+    let failure = match reply {
+        Ok(text) => match decodeJson::<Answer>(text) {
+            Ok(answer) => {
+                if let entry = answer.entry {
+                    return entry
+                }
+                answer.error ?? "no answer"
+            }
+            Err(why) => "{why}"
+        }
+        Err(why) => why
+    }
+    let slots: Map<str, detect.Slot> = Map()
+    for store in detect.shown() {
+        slots[store] = detect.Slot(null, failure)
+    }
+    return detect.Entry(plugin, slots, null, null)
+}
+
+/// Looks every plugin up in every store, at most limit at a time. folder is scratch space for the jars downloaded to
+/// confirm a match; it is removed afterwards.
+pub fn run(plugins: [Plugin], context: Context, folder: str, limit: int) -> [detect.Entry] {
+    let _ = fs.delete(folder)
+    let _ = fs.createDirectories(folder)
+    let inputs: [str] = []
+    for plugin in plugins {
+        inputs.push(encodeJson(Input(plugin, context, folder)))
+    }
+    let list: [detect.Entry] = []
+    let replies = parallel.map("net.blueva.pluginupdater.detect.job.lookUpOne", inputs, limit, "Searching")
+    for index, plugin in plugins {
+        list.push(decoded(replies[index], plugin))
+    }
+    let _ = fs.delete(folder)
+    if let scratch = paths.parent(folder) {
+        if fs.list(scratch).unwrapOr(["x"]).len() == 0 {
+            let _ = fs.delete(scratch)
+        }
+    }
+    return list
+}

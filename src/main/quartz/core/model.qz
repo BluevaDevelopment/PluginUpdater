@@ -9,7 +9,9 @@
 // so what Lua passed as loose tables is declared here.
 package net.blueva.pluginupdater.core.model
 
+
 /// A plugin jar found in the plugins folder; a jar with no descriptor has no name.
+@derive(Decode, Encode)
 pub struct Plugin {
     path: str
     fileName: str
@@ -34,6 +36,7 @@ impl Ref {
 }
 
 /// What a store needs to pick a build for one plugin.
+@derive(Decode, Encode)
 pub struct Context {
     name: str
     root: str
@@ -61,6 +64,7 @@ pub struct Release {
 }
 
 /// What detect learns from searching one store for an installed plugin.
+@derive(Decode, Encode)
 pub struct Found {
     link: str
     title: str

@@ -8,6 +8,7 @@
  */
 package net.blueva.pluginupdater
 
+import net.blueva.pluginupdater.host.Workers
 import org.junit.jupiter.api.DynamicContainer
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
@@ -27,11 +28,14 @@ class QuartzSuites {
     fun suites(): List<DynamicContainer> {
         val network = System.getProperty("pluginupdater.network").toBoolean()
         val root = Path.of("build", "quartz-test").toAbsolutePath().also(Files::createDirectories)
+        val workers = Workers("pluginupdater-test")
         val embed = QuartzEmbed.builder()
             .classLoader(QuartzSuites::class.java.classLoader)
             .grant(Kits.terminal(), Kits.http(), Kits.fileSystem(root), Kits.process(), Kits.archives(root))
             .limits(EmbedLimits.CLI)
+            .host(workers)
             .build()
+        workers.embed = embed
         val probe = embed.module("pluginupdater-test")
         val tests = probe.functions("test").map { it.function() }.filter { network || !it.contains(".network.") }
         probe.close()

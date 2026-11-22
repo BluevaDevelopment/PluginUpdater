@@ -1,0 +1,27 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// Runs a pub function of this module over many text inputs on worker threads, showing progress while it waits.
+// What crosses is text: callers encode their inputs and decode the answers.
+package net.blueva.pluginupdater.core.parallel
+
+import host
+import net.blueva.pluginupdater.core.ui
+
+/// One answer per input, in order; an Err says why a call trapped.
+pub fn map(function: str, inputs: [str], limit: int, label: str) -> [Result<str, str>] {
+    if inputs.len() == 0 {
+        return []
+    }
+    let job = host.startJob(function, inputs, limit)
+    while job.done() < job.total() {
+        job.waitFor(100)
+        ui.progress(label, job.done(), job.total())
+    }
+    ui.clear()
+    return job.results()
+}

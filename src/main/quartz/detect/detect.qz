@@ -17,7 +17,6 @@ import net.blueva.pluginupdater.core.net
 import net.blueva.pluginupdater.core.paths
 import net.blueva.pluginupdater.core.stores
 import net.blueva.pluginupdater.core.text
-import net.blueva.pluginupdater.core.ui
 import net.blueva.pluginupdater.server.descriptor
 import net.blueva.pluginupdater.sources.bukkit
 import net.blueva.pluginupdater.sources.curseforge
@@ -28,12 +27,14 @@ import net.blueva.pluginupdater.sources.spigot
 import org.quartzlang.embed.fs
 
 /// What searching one store gave: a match, an error, or neither.
+@derive(Decode, Encode)
 pub struct Slot {
     found: Found?
     error: str?
 }
 
 /// For each plugin: what every store said, and the store and link chosen.
+@derive(Decode, Encode)
 pub struct Entry {
     plugin: Plugin
     slots: Map<str, Slot>
@@ -139,68 +140,41 @@ fn settle(plugin: Plugin, slots: Map<str, Slot>, context: Context, folder: str) 
     }
 }
 
-/// Looks every plugin up in every store.
-/// folder is scratch space for the jars downloaded to confirm a match; it is removed afterwards.
-pub fn run(plugins: [Plugin], context: Context, folder: str) -> [Entry] {
-    let total = plugins.len() * 6
-    var done = 0
-    let slotsByPlugin: [Map<str, Slot>] = []
-    for plugin in plugins {
-        let slots: Map<str, Slot> = Map()
-        let name = plugin.name ?? plugin.fileName
-        let scoped = context with { name = name }
-        for store in searched() {
-            slots[store] = slotOf(search(store, plugin, scoped))
-            done += 1
-            ui.progress("Searching", done, total)
-        }
-        let hints: [str] = []
-        if let website = plugin.website {
-            hints.push(website)
-        }
-        for store in searched() {
-            if let slot = slots.get(store) {
-                if let found = slot.found {
-                    for hint in found.hints {
-                        hints.push(hint)
-                    }
+/// Looks one plugin up in every store. folder is scratch space for the jar downloaded to confirm a match.
+pub fn lookUp(plugin: Plugin, context: Context, folder: str) -> Entry {
+    let slots: Map<str, Slot> = Map()
+    let scoped = context with { name = plugin.name ?? plugin.fileName }
+    for store in searched() {
+        slots[store] = slotOf(search(store, plugin, scoped))
+    }
+    let hints: [str] = []
+    if let website = plugin.website {
+        hints.push(website)
+    }
+    for store in searched() {
+        if let slot = slots.get(store) {
+            if let found = slot.found {
+                for hint in found.hints {
+                    hints.push(hint)
                 }
             }
         }
-        slots["github"] = slotOf(github.search(plugin, scoped, hints))
-        done += 1
-        ui.progress("Searching", done, total)
-        if let bukkitSlot = slots.get("bukkit") {
-            if let hit = bukkitSlot.found {
-                slots["curseforge"] = Slot(curseforge.fromBukkit(hit), null)
-            } else {
-                slots["curseforge"] = Slot(null, bukkitSlot.error)
-            }
-        }
-        slotsByPlugin.push(slots)
     }
-
-    let _ = fs.delete(folder)
-    let _ = fs.createDirectories(folder)
-    let list: [Entry] = []
-    for index, plugin in plugins {
-        settle(plugin, slotsByPlugin[index], context with { name = plugin.name ?? plugin.fileName }, folder)
-        done += 1
-        ui.progress("Searching", done, total)
-        let chosen = choose(slotsByPlugin[index])
-        var found: Found? = null
-        if let store = chosen {
-            if let slot = slotsByPlugin[index].get(store) {
-                found = slot.found
-            }
-        }
-        list.push(Entry(plugin, slotsByPlugin[index], chosen, found))
-    }
-    let _ = fs.delete(folder)
-    if let scratch = paths.parent(folder) {
-        if fs.list(scratch).unwrapOr(["x"]).len() == 0 {
-            let _ = fs.delete(scratch)
+    slots["github"] = slotOf(github.search(plugin, scoped, hints))
+    if let bukkitSlot = slots.get("bukkit") {
+        if let hit = bukkitSlot.found {
+            slots["curseforge"] = Slot(curseforge.fromBukkit(hit), null)
+        } else {
+            slots["curseforge"] = Slot(null, bukkitSlot.error)
         }
     }
-    return list
+    settle(plugin, slots, scoped, folder)
+    let chosen = choose(slots)
+    var found: Found? = null
+    if let store = chosen {
+        if let slot = slots.get(store) {
+            found = slot.found
+        }
+    }
+    return Entry(plugin, slots, chosen, found)
 }

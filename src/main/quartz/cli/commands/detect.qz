@@ -17,6 +17,7 @@ import net.blueva.pluginupdater.core.system
 import net.blueva.pluginupdater.core.text
 import net.blueva.pluginupdater.core.ui
 import net.blueva.pluginupdater.detect.detect
+import net.blueva.pluginupdater.detect.job
 import net.blueva.pluginupdater.server.config
 import net.blueva.pluginupdater.server.installed
 import net.blueva.pluginupdater.server.writer
@@ -119,8 +120,8 @@ pub fn execute(out: ui.Ui, values: Values) -> Result<int, str> {
 
     ui.step(out, "Looking for {plugins.len()} plugin{if plugins.len() == 1 { "" } else { "s" }} in {detect.shown().len()} stores")
     let root = (loaded?.root) ?? paths.absolute(".")
-    let list = detect.run(plugins, context, paths.join(root, ".pluginupdater/detect"))
-    ui.clear()
+    let parallel = if let known = loaded { known.parallel } else { 8 }
+    let list = job.run(plugins, context, paths.join(root, ".pluginupdater/detect"), parallel)
 
     let missing: [str] = []
     for entry in list {

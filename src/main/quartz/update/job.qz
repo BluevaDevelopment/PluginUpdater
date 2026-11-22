@@ -1,0 +1,83 @@
+// PluginUpdater
+// https://github.com/BluevaDevelopment/PluginUpdater
+//
+// Copyright (c) 2026 Blueva Development
+//
+// SPDX-License-Identifier: MIT
+
+// One plugin's check, run on a worker: everything it needs arrives as JSON and the outcome leaves as JSON.
+package net.blueva.pluginupdater.update.job
+
+import net.blueva.pluginupdater.core.model.Plugin
+import net.blueva.pluginupdater.core.parallel
+import net.blueva.pluginupdater.core.ui
+import net.blueva.pluginupdater.server.config
+import net.blueva.pluginupdater.server.memory.Remembered
+import net.blueva.pluginupdater.update.plan
+import org.quartzlang.data.*
+
+@derive(Decode, Encode)
+struct Input {
+    configPath: str
+    name: str
+    number: int
+    staging: str
+    verbose: bool
+    plugins: [Plugin]
+    remembered: Map<str, Remembered>
+}
+
+@derive(Decode, Encode)
+struct Answer {
+    outcome: plan.Outcome?
+    error: str?
+}
+
+fn check(input: Input) -> Result<plan.Outcome, str> {
+    let loaded = config.load(input.configPath)?
+    let planned = loaded.plugins.find((e) => e.name == input.name) ?? return Err("{input.name} is not in the configuration")
+    return plan.entry(ui.create(input.verbose), loaded, input.plugins, input.remembered, planned, input.staging, input.number)
+}
+
+/// Worker entry point: the JSON of an Input in, the JSON of an Answer out.
+pub fn checkOne(text: str) -> str {
+    let answer = match decodeJson::<Input>(text) {
+        Ok(input) => match check(input) {
+            Ok(outcome) => Answer(outcome, null)
+            Err(why) => Answer(null, why)
+        }
+        Err(why) => Answer(null, "{why}")
+    }
+    return encodeJson(answer)
+}
+
+/// Checks the named entries at most limit at a time; one outcome or failure message per entry, in order.
+pub fn checkAll(configPath: str, names: [str], staging: str, verbose: bool, plugins: [Plugin], remembered: Map<str, Remembered>, limit: int) -> [Result<plan.Outcome, str>] {
+    let inputs: [str] = []
+    for index, name in names {
+        inputs.push(encodeJson(Input(configPath, name, index + 1, staging, verbose, plugins, remembered)))
+    }
+    let results: [Result<plan.Outcome, str>] = []
+    for reply in parallel.map("net.blueva.pluginupdater.update.job.checkOne", inputs, limit, "Checking") {
+        match reply {
+            Ok(text) => {
+                match decodeJson::<Answer>(text) {
+                    Ok(answer) => {
+                        if let outcome = answer.outcome {
+                            results.push(Ok(outcome))
+                        } else {
+                            results.push(Err(answer.error ?? "no answer"))
+                        }
+                    }
+                    Err(why) => {
+                        results.push(Err("{why}"))
+                    }
+                }
+            }
+            Err(why) => {
+                results.push(Err(why))
+            }
+        }
+    }
+    return results
+}

@@ -19,6 +19,7 @@ import net.blueva.pluginupdater.server.config
 import net.blueva.pluginupdater.server.installed
 import net.blueva.pluginupdater.server.memory
 import net.blueva.pluginupdater.update.apply
+import net.blueva.pluginupdater.update.job
 import net.blueva.pluginupdater.update.plan
 import org.quartzlang.embed.fs
 
@@ -93,9 +94,10 @@ pub fn execute(shown: ui.Ui, loaded: config.Config, install: bool, only: [str]) 
     ui.step(shown, "Checking {entries.len()} plugin{plural(entries.len())} in {loaded.pluginsFolder}")
     let outcomes: [plan.Outcome] = []
     var width = 0
+    let names = entries.map((e) => e.name)
+    let checked = job.checkAll(loaded.path, names, staging, shown.verbose, plugins, remembered, loaded.parallel)
     for index, planned in entries {
-        ui.progress("Checking", index, entries.len())
-        match plan.entry(shown, loaded, plugins, remembered, planned, staging, index + 1) {
+        match checked[index] {
             Ok(outcome) => {
                 outcomes.push(outcome)
             }
@@ -107,7 +109,6 @@ pub fn execute(shown: ui.Ui, loaded: config.Config, install: bool, only: [str]) 
             width = planned.name.len()
         }
     }
-    ui.clear()
 
     let changes: [changelog.Change] = []
     var backups: str? = null
