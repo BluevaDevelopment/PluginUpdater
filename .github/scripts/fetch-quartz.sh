@@ -36,8 +36,13 @@ Windows-x64 windows-x86_64 bin/libquartz.dll quartz.dll
 Windows-arm64 windows-aarch64 bin/libquartz.dll quartz.dll
 LIST
 
+# The bindings add the library of -Pquartz.library themselves; keeping this runner's copy here too is a duplicate.
+mkdir -p "$root/host"
+mv "$root/natives/natives/linux-x86_64/libquartz.so" "$root/host/libquartz.so"
+rmdir "$root/natives/natives/linux-x86_64"
+
 {
     echo "QUARTZ_NATIVES=$root/natives"
-    echo "QUARTZ_LIBRARY=$root/natives/natives/linux-x86_64/libquartz.so"
+    echo "QUARTZ_LIBRARY=$root/host/libquartz.so"
 } >>"${GITHUB_ENV:-/dev/null}"
 find "$root/natives" -type f -exec ls -l {} \;
